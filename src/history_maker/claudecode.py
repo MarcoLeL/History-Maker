@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -49,6 +50,28 @@ class LimiteUsoRaggiunto(RuntimeError):
 
 class ClaudeCodeNonTrovato(RuntimeError):
     """L'eseguibile ``claude`` non e' nel PATH."""
+
+
+# Se una di queste e' impostata, Claude Code la preferisce all'abbonamento
+# e le chiamate vengono fatturate a consumo sull'API. Poiche' questa
+# pipeline e' pensata per girare sull'abbonamento, vengono tolte
+# dall'ambiente del processo figlio: e' l'unico modo in cui il lavoro
+# potrebbe costare denaro, e va escluso per costruzione, non per fiducia.
+CREDENZIALI_A_PAGAMENTO = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def ambiente_solo_abbonamento() -> dict[str, str]:
+    """Copia dell'ambiente senza le credenziali a consumo."""
+    ambiente = dict(os.environ)
+    rimosse = [nome for nome in CREDENZIALI_A_PAGAMENTO if ambiente.pop(nome, None)]
+    if rimosse:
+        logger.warning(
+            "%s risulta impostata: la tolgo dall'ambiente di 'claude' perche' "
+            "farebbe fatturare le trascrizioni sull'API a consumo invece di "
+            "usare l'abbonamento.",
+            " e ".join(rimosse),
+        )
+    return ambiente
 
 
 @dataclass
@@ -135,7 +158,12 @@ def esegui(
     comando = costruisci_comando(prompt, sistema, cartelle, modello)
     try:
         completato = subprocess.run(
-            comando, capture_output=True, text=True, timeout=timeout, check=False
+            comando,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=ambiente_solo_abbonamento(),
         )
     except subprocess.TimeoutExpired:
         return Esito(ok=False, errore=f"nessuna risposta entro {timeout}s")

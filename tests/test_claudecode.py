@@ -150,3 +150,48 @@ def test_claude_assente_da_messaggio_utile(monkeypatch):
     monkeypatch.setenv("PATH", "")
     with pytest.raises(claudecode.ClaudeCodeNonTrovato, match="npm install"):
         claudecode.verifica_installazione()
+
+
+# --- garanzia che il lavoro non venga fatturato a consumo ------------------
+
+def test_chiavi_api_tolte_dall_ambiente(monkeypatch):
+    """Con una chiave API impostata, Claude Code fatturerebbe a consumo.
+
+    La pipeline e' pensata per l'abbonamento: le credenziali a pagamento
+    vanno escluse per costruzione, non lasciate alla disciplina di chi la
+    lancia.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-qualcosa")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "un-token")
+    monkeypatch.setenv("PERCORSO_INNOCUO", "resta")
+
+    ambiente = claudecode.ambiente_solo_abbonamento()
+
+    assert "ANTHROPIC_API_KEY" not in ambiente
+    assert "ANTHROPIC_AUTH_TOKEN" not in ambiente
+    assert ambiente["PERCORSO_INNOCUO"] == "resta"
+
+
+def test_ambiente_intatto_senza_chiavi(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    assert claudecode.ambiente_solo_abbonamento() == dict(os.environ)
+
+
+def test_chiave_api_non_raggiunge_il_processo_figlio(tmp_path, monkeypatch):
+    """Verifica end-to-end: il finto 'claude' non vede la chiave."""
+    import stat as _stat
+
+    spia = tmp_path / "visto.txt"
+    script = tmp_path / "claude"
+    script.write_text(
+        f'#!/bin/sh\necho "${{ANTHROPIC_API_KEY:-ASSENTE}}" > {spia}\n'
+        'echo \'{"is_error":false,"subtype":"success","result":"[]","usage":{}}\'\n',
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | _stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-non-deve-passare")
+
+    claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
+    assert spia.read_text().strip() == "ASSENTE"

@@ -68,6 +68,13 @@ npm install -g @anthropic-ai/claude-code
 claude          # una volta sola, per autenticarti con l'abbonamento
 ```
 
+**Nessuna spesa oltre l'abbonamento.** Il progetto non chiama mai l'API a
+consumo: non ha la dipendenza `anthropic` e non legge nessuna chiave. Se
+sulla tua macchina è impostata `ANTHROPIC_API_KEY` o `ANTHROPIC_AUTH_TOKEN`
+— l'unico modo in cui Claude Code fatturerebbe a consumo invece di usare
+l'abbonamento — viene tolta dall'ambiente del processo, con un avviso nel
+log. Il vincolo è la quota, mai il portafoglio.
+
 ### Se il browser non parte
 
 Selenium scarica da solo il chromedriver giusto, ma ha bisogno di
