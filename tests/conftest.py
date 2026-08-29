@@ -3,7 +3,15 @@ from pathlib import Path
 
 import pytest
 
+from finto_claude import installa
+
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def finto_claude(tmp_path, monkeypatch):
+    """Un finto eseguibile 'claude' nel PATH, portabile fra Unix e Windows."""
+    return installa(tmp_path / "finto", monkeypatch)
 
 
 @pytest.fixture

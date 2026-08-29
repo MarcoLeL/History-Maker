@@ -65,9 +65,17 @@ Per la fase di trascrizione serve **Claude Code**, che usa il tuo
 abbonamento Claude Pro — nessun credito API, nessun costo aggiuntivo:
 
 ```bash
-npm install -g @anthropic-ai/claude-code
+# macOS / Linux / WSL
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Windows PowerShell
+irm https://claude.ai/install.ps1 | iex
+
 claude          # una volta sola, per autenticarti con l'abbonamento
 ```
+
+`claude` è il programma a riga di comando: il plugin per gli IDE non lo
+sostituisce, gli fa solo da ponte.
 
 **Nessuna spesa oltre l'abbonamento.** Il progetto non chiama mai l'API a
 consumo: non ha la dipendenza `anthropic` e non legge nessuna chiave. Se
@@ -294,7 +302,7 @@ resta la fonte da consultare per l'uso che ne farai.
 pip install -e ".[dev]" && pytest
 ```
 
-I 109 test girano offline e non consumano quota: il formato del portale
+I 113 test girano offline e non consumano quota: il formato del portale
 è collaudato su manifest campione, la fase di download contro un finto
 server IIIF locale che riproduce anche il 403 sulla sintassi
 `/full/full/0/`, e la fase di trascrizione contro un finto eseguibile

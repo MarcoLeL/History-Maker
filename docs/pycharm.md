@@ -31,7 +31,7 @@ pip install -e ".[dev]"
 ```
 
 Verifica subito con la configurazione **`test · pytest`**: devono passare
-111 test. Se passano, l'ambiente è a posto.
+**113 test**, su Windows come su Unix. Se passano, l'ambiente è a posto.
 
 ## 3. Escludere `data/` dall'indicizzazione
 
@@ -40,23 +40,66 @@ lentissimo:
 
 **tasto destro sulla cartella `data/` → Mark Directory as → Excluded**
 
-## 4. Il plugin Claude Code
+## 4. Claude Code: prima il CLI, poi il plugin
 
-**Settings → Plugins → Marketplace →** cerca **Claude Code** e installa.
-Poi riavvia l'IDE.
+Sono **due cose distinte**, e vanno in quest'ordine. Il plugin è solo un
+ponte verso il CLI: installarlo da solo dà l'errore
+`"claude" non è riconosciuto come comando interno o esterno`.
 
-Serve che l'eseguibile `claude` sia nel PATH:
+### 4a. Il CLI
 
-```bash
-npm install -g @anthropic-ai/claude-code
-claude          # una volta sola, per autenticarti con l'abbonamento
+**Windows PowerShell** (il prompt mostra `PS C:\>`):
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
 ```
 
-Da lì hai Claude dentro l'IDE, con la tua rete: possiamo fare il giro
+**Windows CMD** (il prompt mostra `C:\>` senza `PS`):
+
+```batch
+curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+In alternativa, se preferisci un gestore di pacchetti:
+
+```powershell
+winget install Anthropic.ClaudeCode
+```
+
+**macOS / Linux / WSL:**
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+Verifica e autenticati:
+
+```bash
+claude --version     # deve stampare un numero seguito da (Claude Code)
+claude               # una volta sola, per accedere con l'abbonamento
+```
+
+> **Su Windows conviene installare anche
+> [Git for Windows](https://git-scm.com/downloads/win)**: senza, Claude
+> Code usa PowerShell come shell invece di Bash.
+
+> **Se `claude --version` non funziona subito**, chiudi e riapri il
+> terminale: il PATH viene letto all'avvio. E poiché PyCharm eredita il
+> PATH da quando è stato lanciato, **riavvia anche PyCharm** — è la causa
+> più comune di «l'ho installato ma l'IDE non lo trova».
+
+### 4b. Il plugin
+
+**Settings → Plugins → Marketplace →** cerca **`Claude Code`**. Quello
+giusto si chiama **"Claude Code [Beta]"**, editore Anthropic
+([pagina del marketplace](https://plugins.jetbrains.com/plugin/27310-claude-code-beta-)).
+Installa e riavvia l'IDE.
+
+Da lì hai Claude dentro PyCharm, con la tua rete: possiamo fare il giro
 anno per anno guardando insieme i file che escono.
 
-Lo stesso `claude` è anche quello che usa la fase 3 per trascrivere,
-quindi installarlo serve comunque.
+Lo stesso `claude` è quello che usa la fase 3 per trascrivere, quindi
+installare il CLI serve comunque, plugin o no.
 
 ## 5. Le configurazioni di esecuzione
 
@@ -94,8 +137,8 @@ Se Chrome non parte, in **Edit Configurations → Environment variables**
 aggiungi:
 
 ```
-CHROMEDRIVER=/percorso/di/chromedriver
-CHROME_BINARY=/percorso/di/chrome
+CHROMEDRIVER=C:\percorso\chromedriver.exe
+CHROME_BINARY=C:\Program Files\Google\Chrome\Application\chrome.exe
 ```
 
 Il driver si scarica da

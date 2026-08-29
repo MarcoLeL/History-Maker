@@ -5,9 +5,7 @@ imita la forma dell'output di ``--output-format json``: cosi' i test non
 consumano quota dell'abbonamento e girano ovunque.
 """
 
-import json
 import os
-import stat
 
 import pytest
 
@@ -86,43 +84,10 @@ def test_errore_normale_non_scambiato_per_quota():
 
 # --- ciclo completo contro un finto eseguibile -----------------------------
 
-@pytest.fixture
-def finto_claude(tmp_path, monkeypatch):
-    """Installa un finto 'claude' nel PATH; restituisce come programmarlo."""
-    uscite = tmp_path / "risposta.json"
-
-    script = tmp_path / "claude"
-    script.write_text(
-        "#!/bin/sh\ncat " + str(uscite) + "\n",
-        encoding="utf-8",
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
-
-    def programma(risultato: str, is_error: bool = False, subtype: str = "success"):
-        uscite.write_text(
-            json.dumps(
-                {
-                    "is_error": is_error,
-                    "subtype": subtype,
-                    "result": risultato,
-                    "total_cost_usd": 0.04,
-                    "usage": {
-                        "input_tokens": 4,
-                        "cache_creation_input_tokens": 7000,
-                        "cache_read_input_tokens": 43000,
-                        "output_tokens": 150,
-                    },
-                }
-            ),
-            encoding="utf-8",
-        )
-
-    return programma
-
-
 def test_esecuzione_riuscita(finto_claude, tmp_path):
-    finto_claude('```json\n[{"file": "0001.jpg", "atti": []}]\n```')
+    finto_claude.programma(
+        finto_claude.risposta('```json\n[{"file": "0001.jpg", "atti": []}]\n```')
+    )
     esito = claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
 
     assert esito.ok
@@ -134,14 +99,22 @@ def test_esecuzione_riuscita(finto_claude, tmp_path):
 
 def test_esecuzione_fallita_non_solleva(finto_claude, tmp_path):
     """Un errore normale torna come esito negativo, non come eccezione."""
-    finto_claude("qualcosa e' andato storto", is_error=True, subtype="error_during_execution")
+    finto_claude.programma(
+        finto_claude.risposta(
+            "qualcosa e' andato storto", is_error=True, subtype="error_during_execution"
+        )
+    )
     esito = claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
     assert not esito.ok and esito.errore == "error_during_execution"
 
 
 def test_quota_esaurita_solleva(finto_claude, tmp_path):
     """L'esaurimento della quota va distinto da un errore di lettura."""
-    finto_claude("Claude usage limit reached. Resets at 3pm", is_error=True, subtype="error")
+    finto_claude.programma(
+        finto_claude.risposta(
+            "Claude usage limit reached. Resets at 3pm", is_error=True, subtype="error"
+        )
+    )
     with pytest.raises(LimiteUsoRaggiunto):
         claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
 
@@ -178,20 +151,44 @@ def test_ambiente_intatto_senza_chiavi(monkeypatch):
     assert claudecode.ambiente_solo_abbonamento() == dict(os.environ)
 
 
-def test_chiave_api_non_raggiunge_il_processo_figlio(tmp_path, monkeypatch):
-    """Verifica end-to-end: il finto 'claude' non vede la chiave."""
-    import stat as _stat
-
-    spia = tmp_path / "visto.txt"
-    script = tmp_path / "claude"
-    script.write_text(
-        f'#!/bin/sh\necho "${{ANTHROPIC_API_KEY:-ASSENTE}}" > {spia}\n'
-        'echo \'{"is_error":false,"subtype":"success","result":"[]","usage":{}}\'\n',
-        encoding="utf-8",
-    )
-    script.chmod(script.stat().st_mode | _stat.S_IEXEC)
-    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+def test_chiave_api_non_raggiunge_il_processo_figlio(finto_claude, tmp_path, monkeypatch):
+    """Verifica end-to-end: il processo figlio non vede la chiave."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-non-deve-passare")
+    finto_claude.programma(finto_claude.risposta("[]"))
 
-    claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
-    assert spia.read_text().strip() == "ASSENTE"
+    claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=60)
+    assert finto_claude.chiave_api_vista == "ASSENTE"
+
+
+def test_il_finto_claude_e_trovabile_dal_sistema(finto_claude):
+    """Il lanciatore deve avere il nome che il sistema sa eseguire.
+
+    Su Windows ``shutil.which`` cerca solo i nomi con un'estensione
+    elencata in PATHEXT: un file chiamato 'claude' senza estensione non
+    verrebbe mai trovato, e i test della fase 3 fallirebbero tutti.
+    """
+    import shutil
+
+    trovato = shutil.which("claude")
+    assert trovato is not None
+    atteso = "claude.cmd" if os.name == "nt" else "claude"
+    assert os.path.basename(trovato) == atteso
+
+
+def test_lanciatore_windows_ha_estensione_cmd(tmp_path):
+    """Collaudabile da Unix: su Windows deve nascere un .cmd, non 'claude'.
+
+    Senza estensione, PATHEXT non lo troverebbe e ogni test della fase 3
+    fallirebbe su Windows con 'claude non e' riconosciuto'.
+    """
+    from finto_claude import installa
+
+    class SenzaEffetti:
+        def setenv(self, *args):
+            pass
+
+    cartella = tmp_path / "finto"
+    installa(cartella, SenzaEffetti(), windows=True)
+    prodotti = {p.name for p in cartella.iterdir()}
+    assert "claude.cmd" in prodotti and "claude" not in prodotti
+    assert "@echo off" in (cartella / "claude.cmd").read_text(encoding="utf-8")
