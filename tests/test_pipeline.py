@@ -270,3 +270,50 @@ def test_ricostruzione_non_duplica(config, registro):
 )
 def test_intervalli_compattati(anni, atteso):
     assert dataset._compatta_intervalli(anni) == atteso
+
+
+# --- restrizione a un singolo anno ----------------------------------------
+
+def _registro_anno(anno: int) -> Registro:
+    return Registro(
+        ark_url=f"https://antenati.cultura.gov.it/ark:/12657/an_ua{anno}/x",
+        contesto="Chieti/Stato civile della restaurazione/Torrebruna",
+        titolo=str(anno), tipologia="Nati", anno=anno, archive_id=str(anno),
+        manifest_url=f"https://esempio/{anno}/manifest", n_immagini=3,
+    )
+
+
+def test_download_ristretto_a_un_anno(config):
+    """--anno 1809 deve selezionare solo il 1809, non tutto il secolo."""
+    catalogo = Catalogo(
+        comune="Torrebruna",
+        registri=[_registro_anno(a) for a in (1809, 1810, 1866)],
+    )
+    catalogo.salva(config.catalogo)
+
+    esito = download.esegui(config, solo_stima=True, dal=1809, al=1809)
+    assert esito.scaricate == 0  # --elenca non scarica
+
+    # Il filtro si verifica su quali registri sopravvivono alla selezione.
+    from history_maker.catalogo import pertinente
+
+    selezionati = [
+        r for r in catalogo.registri
+        if pertinente(r, config)[0] and 1809 <= (r.anno or 0) <= 1809
+    ]
+    assert [r.anno for r in selezionati] == [1809]
+
+
+def test_trascrizione_ristretta_a_un_anno(config):
+    catalogo = Catalogo(
+        comune="Torrebruna", registri=[_registro_anno(a) for a in (1809, 1866)]
+    )
+    catalogo.salva(config.catalogo)
+    for registro in catalogo.registri:
+        _immagine_finta(config.immagini / registro.slug / "0001.jpg", (400, 400))
+
+    tutte = transcribe.pagine_da_trascrivere(config)
+    assert len(tutte) == 2
+
+    solo_1809 = transcribe.pagine_da_trascrivere(config, dal=1809, al=1809)
+    assert [p.registro.anno for p in solo_1809] == [1809]

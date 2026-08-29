@@ -97,8 +97,9 @@ export CHROME_BINARY=/percorso/di/chrome   # solo se non è nel PATH
 # a che punto siamo
 python -m history_maker stato
 
-# 1. trova i registri di Torrebruna sul portale (~mezz'ora: una ricerca per anno)
-python -m history_maker discover
+# 1. trova i registri di Torrebruna sul portale
+python -m history_maker discover --anno 1809      # una prova su un anno
+python -m history_maker discover                  # tutto il secolo (~mezz'ora)
 
 # guarda cosa ha trovato prima di scaricare qualsiasi cosa
 python -m history_maker catalog
@@ -119,6 +120,9 @@ python -m history_maker dataset
 # 5. scopri dove le trascrizioni probabilmente sbagliano (non consuma quota)
 python -m history_maker revisione
 ```
+
+Per il giro completo su un anno solo, comando per comando, vedi
+**[`docs/prima-esecuzione.md`](docs/prima-esecuzione.md)**.
 
 ### Consiglio sull'ordine
 

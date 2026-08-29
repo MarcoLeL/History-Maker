@@ -31,7 +31,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verboso", action="store_true", help="log di dettaglio")
     sotto = parser.add_subparsers(dest="comando", required=True)
 
+    def _anni(parser_, aiuto: str) -> None:
+        """Opzioni per restringere l'intervallo senza toccare la configurazione."""
+        parser_.add_argument("--anno", type=int, default=None, help=f"solo quest'anno ({aiuto})")
+        parser_.add_argument("--dal", type=int, default=None, help="anno iniziale")
+        parser_.add_argument("--al", type=int, default=None, help="anno finale")
+
     p = sotto.add_parser("discover", help="fase 1: trova i registri del comune sul portale")
+    _anni(p, "utile per una prova: 92 anni sono 92 ricerche")
     p.add_argument("--headless", action="store_true",
                    help="browser senza finestra (piu' esposto alle challenge del WAF)")
     p.add_argument("--tutti-gli-anni-insieme", action="store_true",
@@ -47,6 +54,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--lato-max", type=int, default=0,
                    help="lato lungo massimo in pixel (0 = piena risoluzione)")
     p.add_argument("--elenca", action="store_true", help="mostra cosa scaricherebbe e si ferma")
+    _anni(p, "scarica solo i registri di quest'anno")
 
     p = sotto.add_parser(
         "transcribe", help="fase 3: fa trascrivere le immagini a Claude Code (abbonamento)"
@@ -58,6 +66,7 @@ def _parser() -> argparse.ArgumentParser:
                    help="quando la quota si esaurisce, aspetta il rinnovo invece di fermarsi")
     p.add_argument("--pagine-per-chiamata", type=int, default=None,
                    help="pagine per invocazione (default: dal file di configurazione)")
+    _anni(p, "trascrive solo le pagine di quest'anno")
 
     sotto.add_parser("dataset", help="fase 4: costruisce database, CSV e sintesi")
     sotto.add_parser(
@@ -77,6 +86,12 @@ def main(argv: list[str] | None = None) -> int:
     _configura_log(args.verboso)
     config = Config.carica(args.config)
 
+    # --anno 1809 e' la scorciatoia per --dal 1809 --al 1809.
+    dal = getattr(args, "dal", None)
+    al = getattr(args, "al", None)
+    if getattr(args, "anno", None) is not None:
+        dal = al = args.anno
+
     if args.comando in RICHIEDONO_CATALOGO and not config.catalogo.exists():
         print(
             f"Nessun catalogo in {config.catalogo}.\n"
@@ -94,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             headless=args.headless,
             solo_anni=not args.tutti_gli_anni_insieme,
             debug_dir=args.debug_html,
+            dal=dal,
+            al=al,
         )
         print(discover.riepilogo(catalogo, config))
         return 0
@@ -116,7 +133,8 @@ def main(argv: list[str] | None = None) -> int:
         from history_maker import download
 
         esito = download.esegui(
-            config, limite_registri=args.limite, lato_max=args.lato_max, solo_stima=args.elenca
+            config, limite_registri=args.limite, lato_max=args.lato_max,
+            solo_stima=args.elenca, dal=dal, al=al,
         )
         if not args.elenca:
             print(
@@ -136,7 +154,9 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
 
-        pagine = transcribe.pagine_da_trascrivere(config, solo_mancanti=not args.rifai)
+        pagine = transcribe.pagine_da_trascrivere(
+            config, solo_mancanti=not args.rifai, dal=dal, al=al
+        )
         if args.limite:
             pagine = pagine[: args.limite]
         print(transcribe.stima(config, pagine))

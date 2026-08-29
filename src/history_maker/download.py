@@ -124,10 +124,16 @@ def esegui(
     limite_registri: int | None = None,
     lato_max: int = 0,
     solo_stima: bool = False,
+    dal: int | None = None,
+    al: int | None = None,
 ) -> Esito:
-    """Scarica tutti i registri pertinenti del catalogo."""
+    """Scarica i registri pertinenti del catalogo, eventualmente di soli alcuni anni."""
     catalogo = Catalogo.carica(config.catalogo)
     selezionati = [r for r in catalogo.registri if pertinente(r, config)[0]]
+    if dal is not None:
+        selezionati = [r for r in selezionati if (r.anno or 0) >= dal]
+    if al is not None:
+        selezionati = [r for r in selezionati if (r.anno or 0) <= al]
     selezionati.sort(key=lambda r: (r.anno or 0, r.tipologia or ""))
     if limite_registri:
         selezionati = selezionati[:limite_registri]

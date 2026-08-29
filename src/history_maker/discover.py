@@ -144,14 +144,25 @@ def esegui(
     headless: bool = False,
     solo_anni: bool = True,
     debug_dir: Path | None = None,
+    dal: int | None = None,
+    al: int | None = None,
 ) -> Catalogo:
-    """Costruisce (o aggiorna) il catalogo dei registri del comune."""
+    """Costruisce (o aggiorna) il catalogo dei registri del comune.
+
+    ``dal`` e ``al`` restringono gli anni interrogati senza toccare il
+    file di configurazione: servono per una prova su un anno solo prima
+    di lanciare la spazzata di tutto il secolo, che sono 92 ricerche.
+    """
     percorso = config.catalogo
     catalogo = (
         Catalogo.carica(percorso) if percorso.exists() else Catalogo(comune=config.comune)
     )
 
-    anni = list(range(config.anno_min, config.anno_max + 1)) if solo_anni else None
+    primo = dal if dal is not None else config.anno_min
+    ultimo = al if al is not None else config.anno_max
+    anni = list(range(primo, ultimo + 1)) if solo_anni else None
+    if anni:
+        logger.info("Interrogo il portale per gli anni %d-%d", primo, ultimo)
 
     with apri_browser(headless=headless) as driver:
         ark_urls = raccogli_ark(driver, config, anni, debug_dir)

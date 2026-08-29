@@ -71,12 +71,21 @@ class Esito:
     quota_esaurita: bool = False
 
 
-def pagine_da_trascrivere(config: Config, solo_mancanti: bool = True) -> list[Pagina]:
+def pagine_da_trascrivere(
+    config: Config,
+    solo_mancanti: bool = True,
+    dal: int | None = None,
+    al: int | None = None,
+) -> list[Pagina]:
     """Le pagine scaricate che rientrano nella raccolta."""
     catalogo = Catalogo.carica(config.catalogo)
     pagine: list[Pagina] = []
     for registro in catalogo.registri:
         if not pertinente(registro, config)[0]:
+            continue
+        if dal is not None and (registro.anno or 0) < dal:
+            continue
+        if al is not None and (registro.anno or 0) > al:
             continue
         cartella = config.immagini / registro.slug
         if not cartella.is_dir():
