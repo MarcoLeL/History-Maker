@@ -122,7 +122,9 @@ python -m history_maker revisione
 ```
 
 Per il giro completo su un anno solo, comando per comando, vedi
-**[`docs/prima-esecuzione.md`](docs/prima-esecuzione.md)**.
+**[`docs/prima-esecuzione.md`](docs/prima-esecuzione.md)**. Se lavori in
+PyCharm, il progetto si apre già con le configurazioni di esecuzione
+pronte: vedi **[`docs/pycharm.md`](docs/pycharm.md)**.
 
 ### Consiglio sull'ordine
 
