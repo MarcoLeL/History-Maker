@@ -11,7 +11,7 @@ La pipeline fa quattro cose, in quattro comandi separati:
 |---|---|---|---|
 | 1 | **discover** | Selenium | `data/catalogo.json` — quali registri esistono |
 | 2 | **download** | requests + IIIF | `data/immagini/` — le pagine digitalizzate |
-| 3 | **transcribe** | Claude | `data/trascrizioni/` — gli atti in JSON |
+| 3 | **transcribe** | Claude Code | `data/trascrizioni/` — gli atti in JSON |
 | 4 | **dataset** | SQLite | `data/dataset/` — database, CSV e sintesi |
 
 Ogni fase legge l'esito della precedente e può essere rilanciata da sola.
@@ -60,12 +60,12 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Per la fase di trascrizione serve una chiave API da
-[console.anthropic.com](https://console.anthropic.com/):
+Per la fase di trascrizione serve **Claude Code**, che usa il tuo
+abbonamento Claude Pro — nessun credito API, nessun costo aggiuntivo:
 
 ```bash
-cp .env.example .env      # poi apri .env e incolla la chiave
-export ANTHROPIC_API_KEY=sk-ant-...
+npm install -g @anthropic-ai/claude-code
+claude          # una volta sola, per autenticarti con l'abbonamento
 ```
 
 ### Se il browser non parte
@@ -100,11 +100,10 @@ python -m history_maker catalog --scartati   # e perché ha escluso il resto
 python -m history_maker download --elenca    # prima vedi cosa scaricherebbe
 python -m history_maker download
 
-# 3. trascrivi con Claude
-python -m history_maker transcribe --stima             # quanto costerebbe
+# 3. trascrivi con Claude Code (usa l'abbonamento)
+python -m history_maker transcribe --stima             # invocazioni, contesto, tempo
 python -m history_maker transcribe --limite 20         # prova su 20 pagine
-python -m history_maker transcribe --batch             # tutto, a metà prezzo
-python -m history_maker transcribe --raccogli          # ritira i risultati
+python -m history_maker transcribe --attendi           # tutto, aspettando il rinnovo quota
 
 # 4. costruisci il database e la sintesi
 python -m history_maker dataset
@@ -113,16 +112,41 @@ python -m history_maker dataset
 ### Consiglio sull'ordine
 
 Fai `discover`, guarda il catalogo, e **solo allora** scarica. Poi
-trascrivi venti pagine con `--limite 20`, leggi il JSON che ne esce, e se
-il prompt ti convince lancia il lotto completo. Un secolo di registri sono
-migliaia di pagine: sbagliare prompt e accorgersene alla fine costa.
+trascrivi venti pagine con `--limite 20` e leggi il JSON che ne esce: è il
+momento per correggere il prompt in `src/history_maker/prompt.py`, che
+conosce il formulario dei tre regimi ma non conosce il tuo paese. Solo
+dopo lancia il resto.
 
-### Perché `--batch`
+### La quota, non il denaro
 
-La [Batch API](https://docs.anthropic.com/en/docs/build-with-claude/batch-processing)
-costa **la metà** e accetta fino a 100.000 richieste per lotto. I risultati
-arrivano di norma entro un'ora, al massimo entro 24. Per migliaia di
-pagine è il percorso giusto; le chiamate sincrone servono per provare.
+Con l'abbonamento non c'è nulla da pagare a consumo, ma la quota si
+esaurisce e si rinnova a finestre. Un secolo di registri sono migliaia di
+pagine: il lavoro **si fermerà più volte**, ed è normale.
+
+- `--attendi` lascia che si fermi e riprenda da solo.
+- Senza `--attendi` si ferma pulito e ti dice di rilanciare più tardi.
+- In entrambi i casi **ogni pagina finita è salvata subito**: rilanciare
+  non rifà mai il lavoro già fatto.
+
+Due leve se la quota finisce troppo in fretta, entrambe in
+`config/torrebruna.yaml`:
+
+- `modello: claude-sonnet-5` consuma molta meno quota di Opus e su una
+  scrittura leggibile se la cava bene.
+- `pagine_per_chiamata` più alto ammortizza meglio il sovraccarico (vedi
+  sotto), a costo di risposte più lunghe.
+
+### Perché le pagine vanno a gruppi
+
+Ogni invocazione di Claude Code porta con sé il suo prompt di sistema e le
+definizioni degli strumenti: **~50.000 token di impalcatura**, contro i
+~2.500 di una singola immagine. Il sovraccarico è per *chiamata*, non per
+*immagine*, quindi trascrivere una pagina alla volta sprecherebbe il 95%
+della quota. A quattro pagine per chiamata il costo scende a ~20.000
+token a pagina — misurato, non stimato.
+
+È il prezzo di questa strada: l'API diretta costerebbe ~2.500 token a
+pagina, ma richiede credito prepagato che l'abbonamento non include.
 
 ---
 
@@ -151,8 +175,13 @@ Un JSON per pagina, conforme allo schema in `src/history_maker/schema.py`:
 }
 ```
 
-Lo schema è passato all'API come `output_config.format`, quindi la risposta
-è JSON valido e conforme per costruzione: non c'è nulla da riparare.
+Claude Code non offre l'equivalente di `output_config.format` dell'API,
+quindi la conformità non è garantita: lo schema è chiesto a parole nel
+prompt e ogni risposta passa dal validatore in
+`src/history_maker/schema.py`, che aggiunge le chiavi mancanti e scarta
+quelle inattese. Se un gruppo di pagine restituisce una risposta
+inutilizzabile, viene ritentato **una pagina per volta**, così una pagina
+illeggibile non trascina con sé le altre tre.
 
 **Ogni campo può essere `null`.** Il prompt vieta esplicitamente di
 inventare: un dato illeggibile resta vuoto e finisce in
@@ -199,6 +228,9 @@ resta la fonte da consultare per l'uso che ne farai.
 pip install -e ".[dev]" && pytest
 ```
 
-I test girano offline: il formato del portale è collaudato su manifest
-campione e la fase di download contro un finto server IIIF locale che
-riproduce anche il 403 sulla sintassi `/full/full/0/`.
+Gli 83 test girano offline e non consumano quota: il formato del portale
+è collaudato su manifest campione, la fase di download contro un finto
+server IIIF locale che riproduce anche il 403 sulla sintassi
+`/full/full/0/`, e la fase di trascrizione contro un finto eseguibile
+`claude` programmabile — raggruppamento, riallineamento delle risposte,
+ripiego a pagina singola ed esaurimento della quota compresi.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import sys
 from pathlib import Path
@@ -47,13 +48,16 @@ def _parser() -> argparse.ArgumentParser:
                    help="lato lungo massimo in pixel (0 = piena risoluzione)")
     p.add_argument("--elenca", action="store_true", help="mostra cosa scaricherebbe e si ferma")
 
-    p = sotto.add_parser("transcribe", help="fase 3: fa trascrivere le immagini a Claude")
-    p.add_argument("--batch", action="store_true",
-                   help="usa la Batch API: meta' del costo, risultati entro 24 ore")
-    p.add_argument("--raccogli", action="store_true", help="scarica i risultati dei lotti gia' inviati")
+    p = sotto.add_parser(
+        "transcribe", help="fase 3: fa trascrivere le immagini a Claude Code (abbonamento)"
+    )
     p.add_argument("--limite", type=int, default=None, help="trascrive solo le prime N pagine")
-    p.add_argument("--stima", action="store_true", help="stima il costo e si ferma")
+    p.add_argument("--stima", action="store_true", help="mostra chiamate, contesto e tempo, poi si ferma")
     p.add_argument("--rifai", action="store_true", help="ritrascrive anche le pagine gia' fatte")
+    p.add_argument("--attendi", action="store_true",
+                   help="quando la quota si esaurisce, aspetta il rinnovo invece di fermarsi")
+    p.add_argument("--pagine-per-chiamata", type=int, default=None,
+                   help="pagine per invocazione (default: dal file di configurazione)")
 
     sotto.add_parser("dataset", help="fase 4: costruisce database, CSV e sintesi")
     sotto.add_parser("stato", help="a che punto e' la pipeline")
@@ -118,28 +122,39 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.comando == "transcribe":
-        from history_maker import transcribe
+        from history_maker import claudecode, transcribe
 
-        if args.raccogli:
-            print(f"Salvate {transcribe.raccogli_lotti(config)} trascrizioni.")
-            return 0
+        if args.pagine_per_chiamata:
+            config = dataclasses.replace(
+                config,
+                trascrizione=dataclasses.replace(
+                    config.trascrizione, pagine_per_chiamata=args.pagine_per_chiamata
+                ),
+            )
 
         pagine = transcribe.pagine_da_trascrivere(config, solo_mancanti=not args.rifai)
         if args.limite:
             pagine = pagine[: args.limite]
-        print(transcribe.stima_costo(config, pagine, lotto=args.batch))
-        if args.stima:
+        print(transcribe.stima(config, pagine))
+        if args.stima or not pagine:
             return 0
-        if not pagine:
-            return 0
-        if args.batch:
-            identificativi = transcribe.invia_lotti(config, pagine)
+
+        try:
+            esito = transcribe.esegui(config, pagine, attendi_quota=args.attendi)
+        except claudecode.ClaudeCodeNonTrovato as exc:
+            print(exc, file=sys.stderr)
+            return 2
+
+        print(
+            f"\nTrascritte {esito.trascritte}/{len(pagine)} pagine "
+            f"({esito.fallite} fallite) in {esito.chiamate} invocazioni."
+        )
+        if esito.quota_esaurita:
             print(
-                f"Inviati {len(identificativi)} lotti. Quando saranno pronti (di norma "
-                f"entro un'ora):\n  python -m history_maker transcribe --raccogli"
+                "\nLa quota dell'abbonamento si e' esaurita. Il lavoro fatto e' salvato:\n"
+                "  rilancia lo stesso comando piu' tardi per riprendere,\n"
+                "  oppure aggiungi --attendi per lasciarlo proseguire da solo."
             )
-        else:
-            print(f"Trascritte {transcribe.trascrivi_sincrono(config, pagine)}/{len(pagine)} pagine.")
         return 0
 
     if args.comando == "dataset":

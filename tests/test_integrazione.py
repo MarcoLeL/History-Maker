@@ -101,6 +101,7 @@ def config(tmp_path) -> Config:
         tipologie=[],
         catalogo=tmp_path / "catalogo.json",
         immagini=tmp_path / "immagini",
+        ridotte=tmp_path / "ridotte",
         trascrizioni=tmp_path / "trascrizioni",
         dataset=tmp_path / "dataset",
     )

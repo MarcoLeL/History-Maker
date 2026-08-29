@@ -22,6 +22,7 @@ def config(tmp_path) -> Config:
         tipologie=[],
         catalogo=tmp_path / "catalogo.json",
         immagini=tmp_path / "immagini",
+        ridotte=tmp_path / "ridotte",
         trascrizioni=tmp_path / "trascrizioni",
         dataset=tmp_path / "dataset",
     )
@@ -70,7 +71,7 @@ def test_nomi_pagina_in_ordine_alfabetico():
     assert nomi == sorted(nomi)
 
 
-# --- fase 3: costruzione della richiesta a Claude --------------------------
+# --- fase 3: preparazione delle immagini e del prompt ----------------------
 
 def _immagine_finta(percorso, dimensione=(3000, 4000)):
     percorso.parent.mkdir(parents=True, exist_ok=True)
@@ -78,43 +79,48 @@ def _immagine_finta(percorso, dimensione=(3000, 4000)):
     return percorso
 
 
-def test_immagine_ridimensionata_al_lato_richiesto(tmp_path):
-    percorso = _immagine_finta(tmp_path / "0001.jpg")
-    import base64
-    import io
+def test_immagine_ridotta_al_lato_richiesto(config, registro, tmp_path):
+    pagina = transcribe.Pagina(_immagine_finta(tmp_path / "0001.jpg"), registro)
+    ridotta = transcribe.prepara_immagine(pagina, config)
+    with Image.open(ridotta) as immagine:
+        assert max(immagine.size) == config.trascrizione.lato_lungo_px
+    # L'originale a piena risoluzione non viene toccato: e' su quello che
+    # si rilegge un atto dubbio.
+    with Image.open(pagina.percorso) as originale:
+        assert originale.size == (3000, 4000)
 
-    media_type, dati = transcribe.prepara_immagine(percorso, 1568)
-    assert media_type == "image/jpeg"
-    with Image.open(io.BytesIO(base64.standard_b64decode(dati))) as ridotta:
-        assert max(ridotta.size) == 1568
 
-
-def test_immagine_piccola_non_viene_ingrandita(tmp_path):
-    percorso = _immagine_finta(tmp_path / "0002.jpg", (800, 600))
-    import base64
-    import io
-
-    _, dati = transcribe.prepara_immagine(percorso, 1568)
-    with Image.open(io.BytesIO(base64.standard_b64decode(dati))) as immagine:
+def test_immagine_piccola_non_viene_ingrandita(config, registro, tmp_path):
+    pagina = transcribe.Pagina(_immagine_finta(tmp_path / "0002.jpg", (800, 600)), registro)
+    with Image.open(transcribe.prepara_immagine(pagina, config)) as immagine:
         assert immagine.size == (800, 600)
 
 
-def test_richiesta_contiene_immagine_contesto_e_schema(config, registro, tmp_path):
-    pagina = transcribe.Pagina(_immagine_finta(tmp_path / "0001.jpg"), registro)
-    richiesta = transcribe.costruisci_richiesta(pagina, config)
+def test_immagine_ridotta_riusata(config, registro, tmp_path):
+    pagina = transcribe.Pagina(_immagine_finta(tmp_path / "0003.jpg", (900, 900)), registro)
+    prima = transcribe.prepara_immagine(pagina, config)
+    firma = prima.stat().st_mtime_ns
+    assert transcribe.prepara_immagine(pagina, config).stat().st_mtime_ns == firma
 
-    assert richiesta["model"] == config.trascrizione.modello
-    # Il prompt di sistema va in cache: e' identico per migliaia di pagine.
-    assert richiesta["system"][0]["cache_control"] == {"type": "ephemeral"}
-    contenuto = richiesta["messages"][0]["content"]
-    assert contenuto[0]["type"] == "image"
-    assert "1866" in contenuto[1]["text"] and "Nati" in contenuto[1]["text"]
-    # Lo schema vincola la risposta: niente JSON da riparare a mano.
-    assert richiesta["output_config"]["format"]["type"] == "json_schema"
+
+def test_prompt_elenca_tutte_le_pagine_e_lo_schema(config, registro, tmp_path):
+    pagine = [
+        transcribe.Pagina(_immagine_finta(tmp_path / f"{i:04d}.jpg", (400, 400)), registro)
+        for i in (1, 2, 3)
+    ]
+    percorsi = [transcribe.prepara_immagine(p, config) for p in pagine]
+    prompt = transcribe.costruisci_prompt(pagine, percorsi)
+
+    for percorso in percorsi:
+        assert str(percorso) in prompt
+    assert "ARRAY JSON di 3 oggetti" in prompt
+    # Senza output_config.format lo schema va chiesto a parole.
+    assert "tipo_pagina" in prompt and "parti_illeggibili" in prompt
+    assert "1866" in prompt and "Nati" in prompt
 
 
 def test_id_richiesta_stabile(config, registro, tmp_path):
-    pagina = transcribe.Pagina(_immagine_finta(tmp_path / "0042.jpg"), registro)
+    pagina = transcribe.Pagina(_immagine_finta(tmp_path / "0042.jpg", (400, 400)), registro)
     assert pagina.id_richiesta == "1866-nati-19944535--0042"
 
 
@@ -147,6 +153,17 @@ def test_registri_non_pertinenti_non_vengono_trascritti(config, registro):
 
     slug_trovati = {p.registro.slug for p in transcribe.pagine_da_trascrivere(config)}
     assert slug_trovati == {registro.slug}
+
+
+def test_stima_conta_le_invocazioni_non_gli_euro(config, registro, tmp_path):
+    pagine = [
+        transcribe.Pagina(_immagine_finta(tmp_path / f"{i:04d}.jpg", (400, 400)), registro)
+        for i in range(1, 10)
+    ]
+    testo = transcribe.stima(config, pagine)
+    # 9 pagine a 4 per chiamata = 3 invocazioni.
+    assert "3 invocazioni" in testo
+    assert "$" not in testo and "euro" not in testo.lower()
 
 
 # --- fase 4: aggregazione -------------------------------------------------

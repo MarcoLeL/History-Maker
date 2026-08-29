@@ -1,46 +1,49 @@
-"""Fase 3: trascrizione delle immagini con Claude.
+"""Fase 3: trascrizione delle immagini con Claude Code.
 
-Due percorsi, stessa richiesta:
+Usa l'abbonamento Claude Pro tramite ``claude -p``, non il credito API.
+Tre conseguenze governano il modulo:
 
-* ``sincrono``  una chiamata per pagina, risultati subito. Comodo per
-  provare il prompt su poche pagine.
-* ``batch``     la Batch API, che costa la meta' e accetta fino a 100.000
-  richieste per lotto. E' il percorso giusto per un secolo di registri.
+**Le pagine vanno a gruppi.** Il sovraccarico di Claude Code (prompt di
+sistema e definizioni degli strumenti, ~50.000 token) e' per invocazione,
+non per immagine. A quattro pagine per chiamata il costo scende a circa
+20.000 token a pagina invece di 50.000.
 
-In entrambi i casi la risposta e' vincolata allo schema di
-``history_maker.schema``, quindi arriva gia' come JSON valido, e il prompt
-di sistema viaggia con ``cache_control`` perche' e' identico per tutte le
-pagine.
+**La quota si esaurisce.** Quando succede il lavoro non fallisce: si
+ferma pulito, oppure aspetta e riprende se glielo si chiede. Ogni pagina
+finita e' salvata subito, quindi rilanciare riprende sempre da dove si
+era arrivati.
+
+**La risposta va validata.** Senza ``output_config.format`` la
+conformita' allo schema non e' garantita, per cui ogni pagina passa da
+``schema.valida_pagina`` e un gruppo che non si lascia interpretare viene
+ritentato una pagina per volta.
 """
 
 from __future__ import annotations
 
-import base64
-import io
 import json
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
 
 from PIL import Image
 
+from history_maker import claudecode
 from history_maker.catalogo import Catalogo, Registro, pertinente
 from history_maker.config import Config
-from history_maker.errors import TranscriptionError
-from history_maker.prompt import ISTRUZIONE_UTENTE, SISTEMA
-from history_maker.schema import FORMATO_RISPOSTA
+from history_maker.prompt import ISTRUZIONE_GRUPPO, SCHEMA_A_PAROLE, SISTEMA, descrivi_pagina
+from history_maker.schema import PaginaNonValida, valida_pagina
 
 logger = logging.getLogger(__name__)
 
 ESTENSIONI_IMMAGINE = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
-# Prezzo per milione di token di Claude Opus 5, usato solo per la stima
-# mostrata prima di spendere. Il lotto asincrono costa la meta'.
-PREZZO_INPUT = 5.00
-PREZZO_OUTPUT = 25.00
+# Quanto aspettare quando la quota e' esaurita e si e' scelto di attendere.
+# I limiti dell'abbonamento si rinnovano su finestre di alcune ore, quindi
+# ricontrollare ogni quarto d'ora e' abbastanza spesso da non perdere
+# tempo e abbastanza raro da non tempestare la CLI.
+ATTESA_QUOTA_S = 900
 
 
 @dataclass
@@ -52,7 +55,6 @@ class Pagina:
 
     @property
     def id_richiesta(self) -> str:
-        """Identificativo stabile, usato come ``custom_id`` nei lotti."""
         return f"{self.registro.slug}--{self.percorso.stem}"
 
     @property
@@ -60,8 +62,17 @@ class Pagina:
         return Path(self.registro.slug) / f"{self.percorso.stem}.json"
 
 
+@dataclass
+class Esito:
+    trascritte: int = 0
+    fallite: int = 0
+    chiamate: int = 0
+    token_contesto: int = 0
+    quota_esaurita: bool = False
+
+
 def pagine_da_trascrivere(config: Config, solo_mancanti: bool = True) -> list[Pagina]:
-    """Elenca le pagine scaricate che rientrano nella raccolta."""
+    """Le pagine scaricate che rientrano nella raccolta."""
     catalogo = Catalogo.carica(config.catalogo)
     pagine: list[Pagina] = []
     for registro in catalogo.registri:
@@ -80,62 +91,49 @@ def pagine_da_trascrivere(config: Config, solo_mancanti: bool = True) -> list[Pa
     return pagine
 
 
-def prepara_immagine(percorso: Path, lato_lungo: int) -> tuple[str, str]:
-    """Ridimensiona e codifica l'immagine per l'API.
+def prepara_immagine(pagina: Pagina, config: Config) -> Path:
+    """Scrive una copia ridotta della pagina e ne restituisce il percorso.
 
-    Oltre i ~1568 px di lato lungo l'API ridimensiona comunque, quindi
-    spedire l'originale da 5000 px consuma banda senza aggiungere
-    dettaglio che il modello possa vedere. Restituisce (media_type, base64).
+    Claude Code legge il file dal disco, quindi il modo di controllare
+    quanto contesto consuma un'immagine e' ridimensionarla prima. Le copie
+    stanno in una cartella a parte: gli originali a piena risoluzione
+    restano intatti, ed e' su quelli che si rilegge un atto dubbio.
     """
-    with Image.open(percorso) as immagine:
+    lato = config.trascrizione.lato_lungo_px
+    destinazione = config.ridotte / pagina.registro.slug / f"{pagina.percorso.stem}.jpg"
+    if destinazione.exists():
+        return destinazione
+    destinazione.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(pagina.percorso) as immagine:
         immagine = immagine.convert("RGB")
-        if max(immagine.size) > lato_lungo:
-            fattore = lato_lungo / max(immagine.size)
-            nuova = (round(immagine.width * fattore), round(immagine.height * fattore))
-            immagine = immagine.resize(nuova, Image.LANCZOS)
-        buffer = io.BytesIO()
-        immagine.save(buffer, format="JPEG", quality=90, optimize=True)
-    return "image/jpeg", base64.standard_b64encode(buffer.getvalue()).decode("ascii")
+        if max(immagine.size) > lato:
+            fattore = lato / max(immagine.size)
+            immagine = immagine.resize(
+                (round(immagine.width * fattore), round(immagine.height * fattore)),
+                Image.LANCZOS,
+            )
+        immagine.save(destinazione, "JPEG", quality=90, optimize=True)
+    return destinazione
 
 
-def costruisci_richiesta(pagina: Pagina, config: Config) -> dict[str, Any]:
-    """Parametri della richiesta, identici fra percorso sincrono e lotto."""
-    media_type, dati = prepara_immagine(pagina.percorso, config.trascrizione.lato_lungo_px)
-    istruzione = ISTRUZIONE_UTENTE.format(
-        contesto=pagina.registro.contesto or "n.d.",
-        anno=pagina.registro.anno or "n.d.",
-        tipologia=pagina.registro.tipologia or "n.d.",
-        pagina=pagina.percorso.stem,
+def costruisci_prompt(pagine: list[Pagina], percorsi: list[Path]) -> str:
+    """Istruzione per un gruppo di pagine."""
+    elenco = "\n".join(
+        descrivi_pagina(
+            str(percorso), pagina.registro.contesto, pagina.registro.anno, pagina.registro.tipologia
+        )
+        for pagina, percorso in zip(pagine, percorsi)
     )
-    return {
-        "model": config.trascrizione.modello,
-        "max_tokens": config.trascrizione.max_token_risposta,
-        # Il prompt di sistema e' identico per ogni pagina: metterlo in
-        # cache lo fa pagare per intero una volta sola.
-        "system": [{"type": "text", "text": SISTEMA, "cache_control": {"type": "ephemeral"}}],
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": dati}},
-                    {"type": "text", "text": istruzione},
-                ],
-            }
-        ],
-        "output_config": {"format": FORMATO_RISPOSTA},
-    }
+    return ISTRUZIONE_GRUPPO.format(
+        quante=len(pagine), elenco=elenco, schema=SCHEMA_A_PAROLE
+    )
 
 
-def _client():
-    import anthropic
-
-    return anthropic.Anthropic()
-
-
-def _salva(config: Config, pagina: Pagina, contenuto: dict[str, Any]) -> Path:
+def _salva(config: Config, pagina: Pagina, contenuto: dict) -> Path:
     destinazione = config.trascrizioni / pagina.destinazione_relativa
     destinazione.parent.mkdir(parents=True, exist_ok=True)
     contenuto = dict(contenuto)
+    contenuto.pop("file", None)  # serviva solo ad allineare la risposta alle pagine
     contenuto["_origine"] = {
         "immagine": str(pagina.percorso.relative_to(config.immagini)),
         "registro": pagina.registro.slug,
@@ -150,141 +148,156 @@ def _salva(config: Config, pagina: Pagina, contenuto: dict[str, Any]) -> Path:
     return destinazione
 
 
-def _testo_risposta(messaggio) -> str:
-    for blocco in messaggio.content:
-        if blocco.type == "text":
-            return blocco.text
-    raise TranscriptionError("La risposta non contiene blocchi di testo")
+def _allinea(risposta, pagine: list[Pagina], percorsi: list[Path]) -> list[dict | None]:
+    """Associa gli oggetti della risposta alle pagine richieste.
 
-
-def trascrivi_sincrono(config: Config, pagine: list[Pagina]) -> int:
-    """Trascrive le pagine una per una, in parallelo su piu' thread."""
-    import anthropic
-
-    client = _client()
-
-    def una(pagina: Pagina) -> bool:
-        try:
-            messaggio = client.messages.create(**costruisci_richiesta(pagina, config))
-            if messaggio.stop_reason == "refusal":
-                logger.warning("%s: richiesta declinata dal modello", pagina.id_richiesta)
-                return False
-            _salva(config, pagina, json.loads(_testo_risposta(messaggio)))
-            return True
-        except anthropic.RateLimitError as exc:
-            attesa = int(exc.response.headers.get("retry-after", "30"))
-            logger.warning("Limite di frequenza raggiunto, attendo %ss", attesa)
-            time.sleep(attesa)
-            return False
-        except anthropic.APIStatusError as exc:
-            logger.error("%s: errore API %s", pagina.id_richiesta, exc.status_code)
-            return False
-        except anthropic.APIConnectionError as exc:
-            logger.error("%s: errore di rete (%s)", pagina.id_richiesta, exc)
-            return False
-        except (json.JSONDecodeError, TranscriptionError) as exc:
-            logger.error("%s: risposta non utilizzabile (%s)", pagina.id_richiesta, exc)
-            return False
-
-    fatte = 0
-    with ThreadPoolExecutor(max_workers=config.trascrizione.richieste_parallele) as pool:
-        futuri = {pool.submit(una, p): p for p in pagine}
-        for indice, futuro in enumerate(as_completed(futuri), 1):
-            if futuro.result():
-                fatte += 1
-            if indice % 25 == 0:
-                logger.info("  ...%d/%d pagine", indice, len(pagine))
-    return fatte
-
-
-def invia_lotti(config: Config, pagine: list[Pagina], dimensione: int = 500) -> list[str]:
-    """Invia le pagine alla Batch API e restituisce gli ID dei lotti.
-
-    I lotti sono tenuti a 500 pagine per stare comodamente sotto il
-    limite di 256 MB per richiesta: un'immagine da 1568 px in base64
-    pesa circa 300-500 KB.
+    Prima per nome file, che e' il criterio robusto se il modello cambia
+    l'ordine; poi per posizione, per le risposte che il nome non ce
+    l'hanno.
     """
-    from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
-    from anthropic.types.messages.batch_create_params import Request
+    if isinstance(risposta, dict):
+        risposta = [risposta]
+    if not isinstance(risposta, list):
+        return [None] * len(pagine)
 
-    client = _client()
-    identificativi: list[str] = []
-    for inizio in range(0, len(pagine), dimensione):
-        fetta = pagine[inizio : inizio + dimensione]
-        richieste = [
-            Request(
-                custom_id=p.id_richiesta,
-                params=MessageCreateParamsNonStreaming(**costruisci_richiesta(p, config)),
-            )
-            for p in fetta
-        ]
-        lotto = client.messages.batches.create(requests=richieste)
-        identificativi.append(lotto.id)
-        logger.info("Lotto %s inviato (%d pagine)", lotto.id, len(fetta))
-    _registro_lotti(config).write_text(
-        json.dumps({"lotti": identificativi}, indent=2), encoding="utf-8"
-    )
-    return identificativi
-
-
-def _registro_lotti(config: Config) -> Path:
-    config.trascrizioni.mkdir(parents=True, exist_ok=True)
-    return config.trascrizioni / "_lotti.json"
-
-
-def raccogli_lotti(config: Config, identificativi: list[str] | None = None) -> int:
-    """Scarica i risultati dei lotti conclusi e li salva su disco."""
-    client = _client()
-    if identificativi is None:
-        percorso = _registro_lotti(config)
-        if not percorso.exists():
-            raise TranscriptionError(
-                "Nessun lotto registrato: lancia prima 'transcribe --batch'."
-            )
-        identificativi = json.loads(percorso.read_text(encoding="utf-8"))["lotti"]
-
-    indice = {p.id_richiesta: p for p in pagine_da_trascrivere(config, solo_mancanti=False)}
-    salvate = 0
-    for identificativo in identificativi:
-        lotto = client.messages.batches.retrieve(identificativo)
-        if lotto.processing_status != "ended":
-            logger.info("Lotto %s ancora in corso (%s)", identificativo, lotto.processing_status)
+    per_nome: dict[str, dict] = {}
+    senza_nome: list[dict] = []
+    for voce in risposta:
+        if not isinstance(voce, dict):
             continue
-        for risultato in client.messages.batches.results(identificativo):
-            pagina = indice.get(risultato.custom_id)
-            if pagina is None:
-                logger.warning("Risultato senza pagina corrispondente: %s", risultato.custom_id)
-                continue
-            if risultato.result.type != "succeeded":
-                logger.warning("%s: esito %s", risultato.custom_id, risultato.result.type)
-                continue
+        nome = voce.get("file")
+        if isinstance(nome, str) and nome.strip():
+            per_nome[Path(nome.strip()).name] = voce
+        else:
+            senza_nome.append(voce)
+
+    allineate: list[dict | None] = []
+    riserva = iter(senza_nome)
+    for percorso in percorsi:
+        voce = per_nome.pop(percorso.name, None)
+        if voce is None:
+            voce = next(riserva, None)
+        allineate.append(voce)
+    return allineate
+
+
+def trascrivi_gruppo(config: Config, pagine: list[Pagina]) -> Esito:
+    """Trascrive un gruppo di pagine con una sola invocazione di Claude Code.
+
+    Se il gruppo non produce risultati utilizzabili e conteneva piu' di
+    una pagina, riprova una pagina per volta: cosi' una pagina illeggibile
+    non porta con se' le altre tre.
+    """
+    percorsi = [prepara_immagine(p, config) for p in pagine]
+    cartelle = sorted({p.parent for p in percorsi} | {config.ridotte})
+
+    esito = Esito(chiamate=1)
+    risultato = claudecode.esegui(
+        prompt=costruisci_prompt(pagine, percorsi),
+        sistema=SISTEMA,
+        cartelle=cartelle,
+        modello=config.trascrizione.modello,
+        timeout=config.trascrizione.timeout_s,
+    )
+    esito.token_contesto = risultato.token_contesto
+
+    if not risultato.ok:
+        logger.warning("Gruppo non riuscito (%s)", risultato.errore)
+        return _ritenta_singole(config, pagine, esito)
+
+    try:
+        dati = claudecode.estrai_json(risultato.testo)
+    except ValueError as exc:
+        logger.warning("Risposta non interpretabile: %s", exc)
+        return _ritenta_singole(config, pagine, esito)
+
+    for pagina, voce in zip(pagine, _allinea(dati, pagine, percorsi)):
+        if voce is None:
+            logger.warning("%s: nessun oggetto corrispondente nella risposta", pagina.id_richiesta)
+            esito.fallite += 1
+            continue
+        try:
+            _salva(config, pagina, valida_pagina(voce))
+            esito.trascritte += 1
+        except PaginaNonValida as exc:
+            logger.warning("%s: %s", pagina.id_richiesta, exc)
+            esito.fallite += 1
+    return esito
+
+
+def _ritenta_singole(config: Config, pagine: list[Pagina], esito: Esito) -> Esito:
+    """Ripiego: una pagina per chiamata, per isolare quella problematica."""
+    if len(pagine) == 1:
+        esito.fallite += 1
+        return esito
+    logger.info("Riprovo le %d pagine una alla volta", len(pagine))
+    for pagina in pagine:
+        singolo = trascrivi_gruppo(config, [pagina])
+        esito.trascritte += singolo.trascritte
+        esito.fallite += singolo.fallite
+        esito.chiamate += singolo.chiamate
+        esito.token_contesto += singolo.token_contesto
+    return esito
+
+
+def esegui(config: Config, pagine: list[Pagina], attendi_quota: bool = False) -> Esito:
+    """Trascrive tutte le pagine, a gruppi, gestendo l'esaurimento della quota."""
+    claudecode.verifica_installazione()
+    per_chiamata = max(1, config.trascrizione.pagine_per_chiamata)
+    gruppi = [pagine[i : i + per_chiamata] for i in range(0, len(pagine), per_chiamata)]
+    totale = Esito()
+
+    for indice, gruppo in enumerate(gruppi, 1):
+        while True:
             try:
-                _salva(config, pagina, json.loads(_testo_risposta(risultato.result.message)))
-                salvate += 1
-            except (json.JSONDecodeError, TranscriptionError) as exc:
-                logger.error("%s: risposta non utilizzabile (%s)", risultato.custom_id, exc)
-    return salvate
+                esito = trascrivi_gruppo(config, gruppo)
+                break
+            except claudecode.LimiteUsoRaggiunto as exc:
+                if not attendi_quota:
+                    logger.warning("Quota dell'abbonamento esaurita: %s", exc)
+                    totale.quota_esaurita = True
+                    return totale
+                logger.info(
+                    "Quota esaurita, riprovo fra %d minuti. Il lavoro fatto e' gia' salvato.",
+                    ATTESA_QUOTA_S // 60,
+                )
+                time.sleep(ATTESA_QUOTA_S)
+
+        totale.trascritte += esito.trascritte
+        totale.fallite += esito.fallite
+        totale.chiamate += esito.chiamate
+        totale.token_contesto += esito.token_contesto
+        logger.info(
+            "[%d/%d gruppi] %d pagine trascritte, %d fallite",
+            indice, len(gruppi), totale.trascritte, totale.fallite,
+        )
+    return totale
 
 
-def stima_costo(config: Config, pagine: list[Pagina], lotto: bool = False) -> str:
-    """Stima in euro/dollari quanto costerebbe trascrivere queste pagine.
+def stima(config: Config, pagine: list[Pagina]) -> str:
+    """Cosa aspettarsi in termini di chiamate, contesto e tempo.
 
-    Il conto dei token di un'immagine e' circa larghezza*altezza/750; per
-    una pagina ridotta a 1568 px di lato lungo siamo intorno ai 2.500
-    token. L'output di un atto trascritto integralmente sta di norma fra
-    800 e 1.500 token.
+    Non ci sono euro da stimare: l'abbonamento e' gia' pagato. Il vincolo
+    e' la quota, che si misura in token, e il tempo.
     """
     if not pagine:
         return "Nessuna pagina da trascrivere."
-    token_immagine = (config.trascrizione.lato_lungo_px * config.trascrizione.lato_lungo_px * 0.75) / 750
-    token_sistema = len(SISTEMA) / 3.5
-    input_totale = len(pagine) * (token_immagine + token_sistema * 0.1)  # 0.1: quasi tutto in cache
-    output_totale = len(pagine) * 1200
-    sconto = 0.5 if lotto else 1.0
-    costo = sconto * (input_totale / 1e6 * PREZZO_INPUT + output_totale / 1e6 * PREZZO_OUTPUT)
+
+    per_chiamata = max(1, config.trascrizione.pagine_per_chiamata)
+    chiamate = -(-len(pagine) // per_chiamata)  # divisione per eccesso
+    # Misurato: ~50.000 token di impalcatura per invocazione, piu' circa
+    # 2.500 per immagine a 1568 px di lato lungo.
+    contesto = chiamate * 50_000 + len(pagine) * 2_500
+    minuti = chiamate * 0.5  # ~30 s a chiamata per un gruppo di quattro
+
     return (
         f"{len(pagine)} pagine da trascrivere con {config.trascrizione.modello}\n"
-        f"  ~{input_totale/1e6:.2f}M token in ingresso, ~{output_totale/1e6:.2f}M in uscita\n"
-        f"  costo stimato: ${costo:,.2f} ({'lotto asincrono' if lotto else 'chiamate sincrone'})\n"
-        f"  la stima e' indicativa: dipende da quanti atti ci sono per pagina."
+        f"  {chiamate} invocazioni di Claude Code ({per_chiamata} pagine ciascuna)\n"
+        f"  ~{contesto / 1e6:.1f}M token di contesto complessivi\n"
+        f"  ~{minuti / 60:.1f} ore di esecuzione, al netto delle pause per la quota\n"
+        f"\n"
+        f"  La quota dell'abbonamento si rinnova a finestre: e' normale che\n"
+        f"  un lavoro di questa mole si fermi e riprenda piu' volte. Usa\n"
+        f"  --attendi per lasciarlo andare da solo; ogni pagina finita e'\n"
+        f"  salvata subito, quindi rilanciare non rifa' mai il lavoro fatto."
     )

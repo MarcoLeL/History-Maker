@@ -1,8 +1,11 @@
-"""Il prompt di sistema per la trascrizione paleografica.
+"""I prompt della trascrizione paleografica.
 
-E' costante e viene messo in cache (``cache_control``): con migliaia di
-pagine da trascrivere, riscriverlo a ogni richiesta costerebbe circa dieci
-volte tanto rispetto a rileggerlo dalla cache.
+``SISTEMA`` viene passato a Claude Code con ``--system-prompt`` e
+sostituisce quello predefinito, che parla di programmazione e qui non
+serve a nulla. ``ISTRUZIONE_GRUPPO`` compone la richiesta per un gruppo
+di pagine: contiene lo schema atteso, perche' la CLI non offre l'
+equivalente di ``output_config.format`` dell'API e la forma della
+risposta va chiesta a parole.
 """
 
 SISTEMA = """Sei un paleografo specializzato in registri di stato civile italiani
@@ -60,13 +63,61 @@ REGOLE DI TRASCRIZIONE
    neonato, padre, madre, defunto, sposo, sposa, dichiarante, testimone,
    levatrice, ufficiale dello stato civile.
 
-Rispondi esclusivamente con il JSON conforme allo schema richiesto."""
+Rispondi esclusivamente con JSON. Nessun commento, nessuna spiegazione,
+nessun testo prima o dopo."""
 
-ISTRUZIONE_UTENTE = """Trascrivi questa pagina del registro di stato civile.
+SCHEMA_A_PAROLE = """Per OGNI pagina restituisci un oggetto con questa forma esatta:
 
-Contesto d'archivio: {contesto}
-Anno del registro: {anno}
-Tipologia: {tipologia}
-Pagina: {pagina}
+{
+  "file": "<il nome del file, esattamente come te l'ho indicato>",
+  "tipo_pagina": "atti" | "copertina" | "indice" | "frontespizio" | "bianca" | "allegato" | "altro",
+  "anno_indicato": <l'anno scritto sulla pagina, o null>,
+  "comune_indicato": <il comune scritto sulla pagina, o null>,
+  "osservazioni": <stato di conservazione, annotazioni a margine, timbri, o null>,
+  "atti": [
+    {
+      "numero_atto": <numero d'ordine, o null>,
+      "tipo": "nascita" | "morte" | "matrimonio" | "pubblicazione" | "cittadinanza" | "altro",
+      "data_atto": <data di registrazione in formato AAAA-MM-GG, o null>,
+      "data_evento": <data dell'evento se diversa, o null>,
+      "ora_evento": <l'ora come scritta nell'atto, o null>,
+      "luogo": <comune, contrada, casa nominata nell'atto, o null>,
+      "persone": [
+        {
+          "ruolo": "neonato" | "padre" | "madre" | "defunto" | "sposo" | "sposa" | "dichiarante" | "testimone" | "levatrice" | "ufficiale",
+          "nome": <o null>, "cognome": <o null>, "eta": <come scritta nell'atto, o null>,
+          "professione": <o null>, "residenza": <o null>,
+          "stato_vitale": <"vivente" o "defunto" se l'atto lo precisa, o null>,
+          "note": <o null>
+        }
+      ],
+      "testo_integrale": <trascrizione diplomatica dell'atto>,
+      "parti_illeggibili": [<descrizione breve di ogni punto incerto>],
+      "affidabilita": "alta" | "media" | "bassa"
+    }
+  ]
+}
 
+Una pagina senza atti (copertina, indice, bianca) ha "atti": [] — non e'
+un errore, e' un risultato corretto."""
+
+
+ISTRUZIONE_GRUPPO = """Trascrivi queste {quante} pagine di registri di stato civile
+del comune di Torrebruna (Chieti). Leggile tutte con lo strumento Read.
+
+{elenco}
+
+{schema}
+
+Rispondi con un ARRAY JSON di {quante} oggetti, uno per pagina, nello
+stesso ordine in cui le ho elencate. Nessun testo fuori dal JSON.
 Ricorda: nessun dato inventato, i campi non leggibili restano null."""
+
+
+def descrivi_pagina(percorso: str, contesto: str | None, anno, tipologia: str | None) -> str:
+    """Una riga dell'elenco delle pagine da trascrivere."""
+    return (
+        f"- {percorso}\n"
+        f"    contesto: {contesto or 'n.d.'} | anno: {anno or 'n.d.'} | "
+        f"tipologia: {tipologia or 'n.d.'}"
+    )

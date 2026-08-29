@@ -33,7 +33,8 @@ tipologie: []
 # Directory di lavoro (relative alla radice del progetto).
 paths:
   catalogo: data/catalogo.json
-  immagini: data/immagini
+  immagini: data/immagini            # originali a piena risoluzione
+  ridotte: data/immagini_ridotte     # copie che legge Claude Code
   trascrizioni: data/trascrizioni
   dataset: data/dataset
 
@@ -45,12 +46,24 @@ rete:
   timeout_s: 120
   tentativi: 5
 
-# Fase di trascrizione.
+# Fase di trascrizione, eseguita da Claude Code con l'abbonamento
+# (nessun credito API richiesto).
 trascrizione:
+  # Su Claude Pro il vincolo e' la quota, non il denaro. Opus da' le
+  # trascrizioni migliori; claude-sonnet-5 consuma molta meno quota e su
+  # una scrittura leggibile se la cava bene. Se il lavoro si ferma di
+  # continuo per quota esaurita, e' il primo valore da cambiare.
   modello: claude-opus-5
-  # Lato lungo massimo dell'immagine inviata al modello. Oltre i ~1568 px
-  # l'API ridimensiona comunque, quindi inviare piu' grande costa banda
-  # senza aggiungere dettaglio fatturabile.
+
+  # Lato lungo delle copie che Claude Code legge. Oltre i ~1568 px il
+  # modello non guadagna dettaglio utile ma il contesto cresce.
   lato_lungo_px: 1568
-  max_token_risposta: 8000
-  richieste_parallele: 4
+
+  # Pagine per invocazione. Il sovraccarico di Claude Code (~50.000 token
+  # di prompt di sistema e strumenti) si paga una volta per chiamata, non
+  # per immagine: a 4 pagine per chiamata il costo per pagina scende da
+  # ~50.000 a ~20.000 token. Alzarlo risparmia ancora, ma allunga la
+  # risposta e rende piu' probabile che il modello confonda le pagine.
+  pagine_per_chiamata: 4
+
+  timeout_s: 900

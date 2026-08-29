@@ -24,8 +24,10 @@ class Rete:
 class Trascrizione:
     modello: str = "claude-opus-5"
     lato_lungo_px: int = 1568
-    max_token_risposta: int = 8000
-    richieste_parallele: int = 4
+    # Il sovraccarico di Claude Code e' per invocazione, non per immagine:
+    # raggruppare le pagine e' il modo per non sprecare la quota.
+    pagine_per_chiamata: int = 4
+    timeout_s: int = 900
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ class Config:
     tipologie: list[str]
     catalogo: Path
     immagini: Path
+    ridotte: Path
     trascrizioni: Path
     dataset: Path
     rete: Rete = field(default_factory=Rete)
@@ -64,6 +67,7 @@ class Config:
             tipologie=list(dati.get("tipologie") or []),
             catalogo=_path("catalogo", "data/catalogo.json"),
             immagini=_path("immagini", "data/immagini"),
+            ridotte=_path("ridotte", "data/immagini_ridotte"),
             trascrizioni=_path("trascrizioni", "data/trascrizioni"),
             dataset=_path("dataset", "data/dataset"),
             rete=Rete(**(dati.get("rete") or {})),

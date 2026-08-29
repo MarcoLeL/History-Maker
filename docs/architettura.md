@@ -67,13 +67,31 @@ sovrascrive le correzioni.
 rinominato solo a scaricamento finito, così un Ctrl-C non lascia file
 troncati che al rilancio sembrerebbero completi.
 
-**Il prompt di sistema va in cache.** È identico per tutte le pagine:
-con `cache_control: ephemeral` si paga per intero una volta sola invece
-che migliaia.
+**La trascrizione passa da Claude Code, non dall'API.** L'abbonamento
+Claude Pro non include credito API: `claude -p` usa la quota
+dell'abbonamento. Le opzioni della chiamata non sono decorative —
+`--system-prompt` sostituisce il prompt da agente di programmazione con
+quello paleografico, `--allowedTools Read` e `--restricted` riducono la
+CLI a ciò che serve, `--permission-mode dontAsk` evita che si fermi ad
+attendere un consenso che in un ciclo di migliaia di pagine nessuno
+darebbe.
 
-**Lo schema JSON è passato all'API.** Con `output_config.format` la
-risposta è conforme per costruzione — niente parsing difensivo, niente
-riparazioni.
+**Le pagine vanno a gruppi.** Misurato su invocazioni reali: il
+sovraccarico di Claude Code è ~50.000 token per *chiamata*, contro ~2.500
+per immagine. A una pagina per chiamata il 95% della quota se ne
+andrebbe in impalcatura; a quattro pagine il costo scende a ~20.000 token
+a pagina. È la ragione per cui `transcribe` non è un semplice ciclo.
+
+**La risposta va validata.** L'API offre `output_config.format` e
+garantisce la conformità; la CLI no. Il testo torna quasi sempre dentro un
+blocco markdown (verificato), quindi `claudecode.estrai_json` lo ripulisce
+cercando il primo valore JSON bilanciato, e `schema.valida_pagina`
+normalizza la struttura. Un gruppo che non si lascia interpretare viene
+ritentato una pagina per volta, per isolare quella problematica.
+
+**L'esaurimento della quota non è un errore.** Va distinto da una pagina
+illeggibile: `LimiteUsoRaggiunto` interrompe il ciclo, e poiché ogni
+pagina finita è già su disco, rilanciare riprende esattamente da lì.
 
 ## Cosa non è stato verificato
 
@@ -97,9 +115,21 @@ o aggiungi un'attesa esplicita in `discover._link_ark`. Se l'HTML è quasi
 vuoto, è il WAF: lancia senza `--headless`, così puoi risolvere la
 challenge a mano nella finestra una volta sola.
 
-## Costi indicativi
+## Consumo indicativo
 
-Con Claude Opus 5 e immagini a 1568 px di lato lungo, una pagina costa
-circa 2.500 token in ingresso e 1.200 in uscita. Su 4.000 pagine sono
-grosso modo 170 $ con le chiamate sincrone e 85 $ con la Batch API.
+Misurato su invocazioni reali di `claude -p` con immagini a 1568 px:
+
+| | token di contesto |
+|---|---|
+| una pagina per chiamata | ~50.000 a pagina |
+| quattro pagine per chiamata | ~20.000 a pagina |
+| *(per confronto: API diretta)* | *~2.500 a pagina* |
+
 `transcribe --stima` fa il conto sulle pagine effettivamente presenti.
+Non ci sono euro da stimare: il vincolo è la quota dell'abbonamento, che
+si rinnova a finestre. Su migliaia di pagine il lavoro si fermerà più
+volte — `--attendi` lo lascia proseguire da solo.
+
+Se la quota si esaurisce troppo in fretta, `claude-sonnet-5` in
+`config/torrebruna.yaml` consuma molto meno di Opus e su una scrittura
+leggibile regge bene.

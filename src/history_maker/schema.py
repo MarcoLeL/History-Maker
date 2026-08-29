@@ -104,3 +104,67 @@ PAGINA = {
 }
 
 FORMATO_RISPOSTA = {"type": "json_schema", "schema": PAGINA}
+
+
+# --- validazione -----------------------------------------------------------
+#
+# Con l'API lo schema viaggia in ``output_config.format`` e la risposta e'
+# conforme per costruzione. Claude Code non offre quel vincolo, quindi la
+# conformita' va verificata qui: le chiavi mancanti vengono aggiunte a
+# null, quelle inattese scartate, e i tipi sbagliati normalizzati.
+
+_CAMPI_PERSONA = tuple(PERSONA["properties"])
+_CAMPI_ATTO = tuple(ATTO["properties"])
+_CAMPI_PAGINA = tuple(PAGINA["properties"])
+
+
+class PaginaNonValida(ValueError):
+    """La risposta non e' interpretabile come una pagina di registro."""
+
+
+def _stringa(valore: Any) -> str | None:
+    if valore is None:
+        return None
+    if isinstance(valore, str):
+        return valore.strip() or None
+    return str(valore)
+
+
+def _lista_stringhe(valore: Any) -> list[str]:
+    if valore is None:
+        return []
+    if isinstance(valore, str):
+        return [valore] if valore.strip() else []
+    if isinstance(valore, list):
+        return [str(v).strip() for v in valore if str(v).strip()]
+    return []
+
+
+def valida_persona(dati: Any) -> dict[str, Any]:
+    grezzo = dati if isinstance(dati, dict) else {}
+    return {campo: _stringa(grezzo.get(campo)) for campo in _CAMPI_PERSONA}
+
+
+def valida_atto(dati: Any) -> dict[str, Any]:
+    grezzo = dati if isinstance(dati, dict) else {}
+    atto = {campo: _stringa(grezzo.get(campo)) for campo in _CAMPI_ATTO}
+    persone = grezzo.get("persone")
+    atto["persone"] = [valida_persona(p) for p in persone] if isinstance(persone, list) else []
+    atto["parti_illeggibili"] = _lista_stringhe(grezzo.get("parti_illeggibili"))
+    return atto
+
+
+def valida_pagina(dati: Any) -> dict[str, Any]:
+    """Normalizza la risposta del modello nella forma attesa dallo schema.
+
+    Solleva :class:`PaginaNonValida` solo quando non c'e' proprio nulla da
+    normalizzare: una pagina senza atti e' un risultato legittimo (una
+    copertina, un indice, una pagina bianca), non un errore.
+    """
+    if not isinstance(dati, dict):
+        raise PaginaNonValida(f"attesa una struttura, ricevuto {type(dati).__name__}")
+
+    pagina = {campo: _stringa(dati.get(campo)) for campo in _CAMPI_PAGINA}
+    atti = dati.get("atti")
+    pagina["atti"] = [valida_atto(a) for a in atti] if isinstance(atti, list) else []
+    return pagina
