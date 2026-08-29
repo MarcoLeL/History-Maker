@@ -74,6 +74,9 @@ SCHEMA_A_PAROLE = """Per OGNI pagina restituisci un oggetto con questa forma esa
   "anno_indicato": <l'anno scritto sulla pagina, o null>,
   "comune_indicato": <il comune scritto sulla pagina, o null>,
   "osservazioni": <stato di conservazione, annotazioni a margine, timbri, o null>,
+  "voci_indice": [
+    {"cognome": ..., "nome": ..., "numero_atto": ...}
+  ],
   "atti": [
     {
       "numero_atto": <numero d'ordine, o null>,
@@ -99,7 +102,13 @@ SCHEMA_A_PAROLE = """Per OGNI pagina restituisci un oggetto con questa forma esa
 }
 
 Una pagina senza atti (copertina, indice, bianca) ha "atti": [] — non e'
-un errore, e' un risultato corretto."""
+un errore, e' un risultato corretto.
+
+Se la pagina e' un INDICE, trascrivi in "voci_indice" TUTTE le voci
+elencate, una per riga dell'indice, con il numero d'atto a cui rimandano.
+E' importante: l'indice e' una seconda lettura degli stessi cognomi degli
+atti, e serve a scoprire gli errori di lettura. Per tutte le altre pagine
+"voci_indice" e' []."""
 
 
 ISTRUZIONE_GRUPPO = """Trascrivi queste {quante} pagine di registri di stato civile

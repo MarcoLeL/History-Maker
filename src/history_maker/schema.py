@@ -84,6 +84,22 @@ ATTO = {
     "additionalProperties": False,
 }
 
+# Le pagine di indice elencano i cognomi degli atti di quell'anno: sono
+# una SECONDA LETTURA indipendente degli stessi nomi, ed e' su questa che
+# si regge la verifica incrociata della fase di revisione. Trascriverle
+# come dati, e non come semplice annotazione, non costa nulla in piu' e
+# raddoppia le occasioni di accorgersi di un errore.
+VOCE_INDICE = {
+    "type": "object",
+    "properties": {
+        "cognome": _testo(),
+        "nome": _testo(),
+        "numero_atto": _testo(),
+    },
+    "required": ["cognome", "nome", "numero_atto"],
+    "additionalProperties": False,
+}
+
 PAGINA = {
     "type": "object",
     "properties": {
@@ -94,12 +110,20 @@ PAGINA = {
         "anno_indicato": _testo(),
         "comune_indicato": _testo(),
         "atti": {"type": "array", "items": ATTO},
+        "voci_indice": {
+            "type": "array",
+            "items": VOCE_INDICE,
+            "description": "solo per le pagine di indice: le voci elencate",
+        },
         "osservazioni": {
             "type": ["string", "null"],
             "description": "note del trascrittore: stato di conservazione, annotazioni a margine, timbri",
         },
     },
-    "required": ["tipo_pagina", "anno_indicato", "comune_indicato", "atti", "osservazioni"],
+    "required": [
+        "tipo_pagina", "anno_indicato", "comune_indicato",
+        "atti", "voci_indice", "osservazioni",
+    ],
     "additionalProperties": False,
 }
 
@@ -154,6 +178,11 @@ def valida_atto(dati: Any) -> dict[str, Any]:
     return atto
 
 
+def valida_voce_indice(dati: Any) -> dict[str, Any]:
+    grezzo = dati if isinstance(dati, dict) else {}
+    return {campo: _stringa(grezzo.get(campo)) for campo in VOCE_INDICE["properties"]}
+
+
 def valida_pagina(dati: Any) -> dict[str, Any]:
     """Normalizza la risposta del modello nella forma attesa dallo schema.
 
@@ -167,4 +196,8 @@ def valida_pagina(dati: Any) -> dict[str, Any]:
     pagina = {campo: _stringa(dati.get(campo)) for campo in _CAMPI_PAGINA}
     atti = dati.get("atti")
     pagina["atti"] = [valida_atto(a) for a in atti] if isinstance(atti, list) else []
+    voci = dati.get("voci_indice")
+    pagina["voci_indice"] = (
+        [valida_voce_indice(v) for v in voci] if isinstance(voci, list) else []
+    )
     return pagina

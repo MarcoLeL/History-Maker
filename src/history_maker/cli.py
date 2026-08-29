@@ -60,6 +60,10 @@ def _parser() -> argparse.ArgumentParser:
                    help="pagine per invocazione (default: dal file di configurazione)")
 
     sotto.add_parser("dataset", help="fase 4: costruisce database, CSV e sintesi")
+    sotto.add_parser(
+        "revisione",
+        help="fase 5: segnala le letture probabilmente sbagliate (non consuma quota)",
+    )
     sotto.add_parser("stato", help="a che punto e' la pipeline")
     return parser
 
@@ -165,6 +169,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Sintesi:  {config.dataset / 'sintesi.md'}")
         return 0
 
+    if args.comando == "revisione":
+        from history_maker import revisione
+
+        try:
+            segnalazioni, incerti = revisione.analizza(config)
+        except FileNotFoundError as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        percorso = revisione.scrivi_report(config)
+        print(
+            f"{len(segnalazioni)} segnalazioni e {len(incerti)} atti incerti.\n"
+            f"Report: {percorso}\n"
+            f"\nSono segnalazioni da vagliare, non correzioni: un cognome raro\n"
+            f"puo' essere un forestiero vero, ed e' un dato che vale la pena tenere."
+        )
+        return 0
+
     if args.comando == "stato":
         _stato(config)
         return 0
@@ -205,6 +226,9 @@ def _stato(config: Config) -> None:
 
     db = config.dataset / "torrebruna.sqlite"
     print(f"4. dataset      {'costruito' if db.exists() else 'non ancora costruito'}")
+
+    report = config.dataset / "revisione.md"
+    print(f"5. revisione    {'fatta' if report.exists() else 'non ancora fatta'}")
 
 
 if __name__ == "__main__":

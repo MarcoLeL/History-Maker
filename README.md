@@ -13,6 +13,7 @@ La pipeline fa quattro cose, in quattro comandi separati:
 | 2 | **download** | requests + IIIF | `data/immagini/` — le pagine digitalizzate |
 | 3 | **transcribe** | Claude Code | `data/trascrizioni/` — gli atti in JSON |
 | 4 | **dataset** | SQLite | `data/dataset/` — database, CSV e sintesi |
+| 5 | **revisione** | statistica | `revisione.md` — le letture da ricontrollare |
 
 Ogni fase legge l'esito della precedente e può essere rilanciata da sola.
 Tutte riprendono da dove si erano interrotte.
@@ -114,6 +115,9 @@ python -m history_maker transcribe --attendi           # tutto, aspettando il ri
 
 # 4. costruisci il database e la sintesi
 python -m history_maker dataset
+
+# 5. scopri dove le trascrizioni probabilmente sbagliano (non consuma quota)
+python -m history_maker revisione
 ```
 
 ### Consiglio sull'ordine
@@ -214,6 +218,55 @@ immagini restano tutte su disco proprio per questo.
 
 ---
 
+## La fase 5: trovare gli errori di lettura
+
+Un secolo di atti di un solo comune è una fonte molto **ridondante**, e la
+ridondanza si può sfruttare per scoprire gli errori senza rileggere nulla.
+La fase 5 è pura aritmetica: **non chiama mai il modello, non consuma
+quota**, e si può rilanciare all'infinito.
+
+Tre controlli, in ordine di affidabilità:
+
+**Gli indici.** I registri hanno pagine di indice che elencano i cognomi
+degli atti di quell'anno: sono una *seconda lettura indipendente degli
+stessi nomi*. Se gli atti dicono "Colangelo" e l'indice dice "Colangeli",
+una delle due è sbagliata. È il segnale migliore, e costa zero.
+
+**Le frequenze.** In un paese di poche migliaia di anime i cognomi sono
+un centinaio e ricorrono migliaia di volte. Una forma vista una volta
+sola, a un passo da una vista trecento volte, merita un'occhiata.
+
+**Le varianti.** `Di Nardo`, `Dinardo` e `De Nardo` sono la stessa
+famiglia: qui non c'è un errore di lettura ma una normalizzazione da
+decidere prima di contare le persone.
+
+La vicinanza non è una distanza di edit generica ma **pesata sulle
+confusioni della mano ottocentesca**: la `ſ` lunga letta come `f`, la `m`
+resa con lo stesso numero di gambe di `in`, `c`/`e`, `u`/`n`, le doppie
+instabili. Scambiare `f` con `s` costa 0,3; scambiarla con `z` costa 1,0.
+La tabella è in `src/history_maker/paleografia.py` ed è **il primo posto
+da correggere** quando avrai visto le mani dei tuoi registri: ogni
+scrivano ha le sue abitudini.
+
+### Non corregge, segnala
+
+Questa è la scelta di fondo. Un cognome raro può essere una lettura
+errata, ma può anche essere un **forestiero vero**: una sposa di
+Castiglione Messer Marino, un soldato, un prete di passaggio. Sono
+esattamente i casi che raccontano i rapporti fra Torrebruna e i paesi
+vicini — la mobilità matrimoniale, i legami di parentela fra comuni. Un
+correttore automatico li appiattirebbe sui cognomi locali, distruggendo
+il segnale più interessante che hai.
+
+Quindi `revisione.md` propone, con il motivo e il rimando all'immagine, e
+decidi tu. **Confermare una forma rara è un risultato quanto correggerla.**
+
+Quello che questa fase *non* fa: se una grafia è oggettivamente
+illeggibile, nessuna statistica la salva. Riduce gli errori sistematici e
+ti dice dove guardare; non sostituisce il tuo occhio sull'originale.
+
+---
+
 ## Configurazione
 
 Tutto in `config/torrebruna.yaml`: intervallo di anni, tipologie,
@@ -235,9 +288,11 @@ resta la fonte da consultare per l'uso che ne farai.
 pip install -e ".[dev]" && pytest
 ```
 
-Gli 83 test girano offline e non consumano quota: il formato del portale
+I 109 test girano offline e non consumano quota: il formato del portale
 è collaudato su manifest campione, la fase di download contro un finto
 server IIIF locale che riproduce anche il 403 sulla sintassi
 `/full/full/0/`, e la fase di trascrizione contro un finto eseguibile
 `claude` programmabile — raggruppamento, riallineamento delle risposte,
-ripiego a pagina singola ed esaurimento della quota compresi.
+ripiego a pagina singola ed esaurimento della quota compresi. La fase 5 è
+collaudata sul caso che l'ha originata: un cognome raro vicino a uno
+frequente viene segnalato, un forestiero vero no.

@@ -66,6 +66,19 @@ CREATE TABLE IF NOT EXISTS persone (
     note          TEXT
 );
 
+-- Le voci di indice sono una seconda lettura degli stessi cognomi degli
+-- atti: stanno in una tabella a parte perche' la fase di revisione le
+-- confronta con quelle lette negli atti dello stesso registro.
+CREATE TABLE IF NOT EXISTS voci_indice (
+    id          INTEGER PRIMARY KEY,
+    registro    TEXT REFERENCES registri(slug),
+    immagine    TEXT,
+    numero_atto TEXT,
+    nome        TEXT,
+    cognome     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_indice_registro ON voci_indice(registro);
 CREATE INDEX IF NOT EXISTS idx_atti_anno    ON atti(anno);
 CREATE INDEX IF NOT EXISTS idx_atti_tipo    ON atti(tipo);
 CREATE INDEX IF NOT EXISTS idx_pers_cognome ON persone(cognome);
@@ -106,7 +119,7 @@ def costruisci(config: Config) -> Path:
     conn = sqlite3.connect(percorso_db)
     conn.executescript(SCHEMA_SQL)
 
-    n_atti = n_persone = n_pagine = 0
+    n_atti = n_persone = n_pagine = n_voci = 0
     for pagina in leggi_trascrizioni(config.trascrizioni):
         origine = pagina.get("_origine", {})
         n_pagine += 1
@@ -120,6 +133,20 @@ def costruisci(config: Config) -> Path:
                 origine.get("ark_url"),
             ),
         )
+        for voce in pagina.get("voci_indice") or []:
+            conn.execute(
+                "INSERT INTO voci_indice (registro, immagine, numero_atto, nome, cognome) "
+                "VALUES (?,?,?,?,?)",
+                (
+                    origine.get("registro"),
+                    origine.get("immagine"),
+                    voce.get("numero_atto"),
+                    voce.get("nome"),
+                    voce.get("cognome"),
+                ),
+            )
+            n_voci += 1
+
         for atto in pagina.get("atti") or []:
             cursore = conn.execute(
                 """INSERT INTO atti (registro, immagine, numero_atto, tipo, anno,
@@ -168,7 +195,8 @@ def costruisci(config: Config) -> Path:
     )
     conn.commit()
     logger.info(
-        "Database: %d pagine, %d atti, %d persone", n_pagine, n_atti, n_persone
+        "Database: %d pagine, %d atti, %d persone, %d voci di indice",
+        n_pagine, n_atti, n_persone, n_voci,
     )
 
     _esporta_csv(conn, config.dataset)
@@ -178,7 +206,7 @@ def costruisci(config: Config) -> Path:
 
 
 def _esporta_csv(conn: sqlite3.Connection, cartella: Path) -> None:
-    for tabella in ("atti", "persone"):
+    for tabella in ("atti", "persone", "voci_indice"):
         cursore = conn.execute(f"SELECT * FROM {tabella}")
         intestazioni = [d[0] for d in cursore.description]
         with (cartella / f"{tabella}.csv").open("w", newline="", encoding="utf-8") as handle:
