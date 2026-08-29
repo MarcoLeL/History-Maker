@@ -1,0 +1,56 @@
+# Configurazione della raccolta per il comune di Torrebruna (CH).
+#
+# I filtri operano sui metadati del manifest IIIF, non sull'HTML del
+# portale: ogni manifest espone "Contesto archivistico" (che contiene il
+# comune), "Titolo" (l'anno) e "Tipologia" (Nati, Morti, Matrimoni, ...).
+# Filtrare qui è quindi affidabile anche se il portale cambia grafica.
+
+comune: Torrebruna
+
+# Termine digitato nel campo "Luogo" della ricerca sul portale.
+termine_ricerca: Torrebruna
+
+# Il contesto archivistico deve contenere una di queste stringhe
+# (confronto senza distinzione di maiuscole/accenti).
+includi_contesto:
+  - Torrebruna
+
+# ...e non deve contenere nessuna di queste. Guardiabruna e' oggi una
+# frazione di Torrebruna ma fino al 1928 era comune autonomo con registri
+# di stato civile propri: il portale la restituisce fra i risultati della
+# ricerca ed e' esattamente cio' che va escluso.
+escludi_contesto:
+  - Guardiabruna
+
+anno_min: 1809
+anno_max: 1900
+
+# Tipologie da scaricare. Lista vuota = tutte quelle disponibili.
+# Valori tipici sul portale: Nati, Morti, Matrimoni, Pubblicazioni,
+# Cittadinanze, Diversi, Allegati, Indici.
+tipologie: []
+
+# Directory di lavoro (relative alla radice del progetto).
+paths:
+  catalogo: data/catalogo.json
+  immagini: data/immagini
+  trascrizioni: data/trascrizioni
+  dataset: data/dataset
+
+# Comportamento di rete. Il portale sta dietro un WAF: tenere i valori
+# bassi e' una scelta di cortesia verso un servizio pubblico gratuito.
+rete:
+  download_paralleli: 3
+  pausa_tra_richieste_s: 0.4
+  timeout_s: 120
+  tentativi: 5
+
+# Fase di trascrizione.
+trascrizione:
+  modello: claude-opus-5
+  # Lato lungo massimo dell'immagine inviata al modello. Oltre i ~1568 px
+  # l'API ridimensiona comunque, quindi inviare piu' grande costa banda
+  # senza aggiungere dettaglio fatturabile.
+  lato_lungo_px: 1568
+  max_token_risposta: 8000
+  richieste_parallele: 4

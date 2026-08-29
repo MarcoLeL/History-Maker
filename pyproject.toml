@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "history-maker"
+version = "0.1.0"
+description = "Raccolta, scaricamento e trascrizione degli atti di stato civile di Torrebruna (1809-1900) dal Portale Antenati"
+requires-python = ">=3.10"
+dependencies = [
+    "selenium>=4.20",
+    "requests>=2.31",
+    "anthropic>=0.40",
+    "python-slugify>=8.0",
+    "PyYAML>=6.0",
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+history-maker = "history_maker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

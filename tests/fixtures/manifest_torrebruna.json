@@ -1,0 +1,20 @@
+{
+  "@context": "http://iiif.io/api/presentation/2/context.json",
+  "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/aBcDeFg/manifest",
+  "@type": "sc:Manifest",
+  "label": "Torrebruna Nati 1866",
+  "metadata": [
+    {"label": "Contesto archivistico", "value": "Archivio di Stato di Chieti/Stato civile italiano/Torrebruna"},
+    {"label": "Titolo", "value": "1866"},
+    {"label": "Tipologia", "value": "Nati"}
+  ],
+  "sequences": [{
+    "@id": "https://example.org/ark/12657/an_ua19944535/sequence/normal",
+    "canvases": [
+      {"@id": "https://example.org/ark/12657/an_ua19944535/canvas/p1", "label": "0001",
+       "images": [{"resource": {"@id": "https://iiif-antenati.cultura.gov.it/iiif/2/aa1/full/full/0/default.jpg", "format": "image/jpeg"}}]},
+      {"@id": "https://example.org/ark/12657/an_ua19944535/canvas/p2", "label": "0002",
+       "images": [{"resource": {"@id": "https://iiif-antenati.cultura.gov.it/iiif/2/aa2/full/full/0/default.jpg", "format": "image/jpeg"}}]}
+    ]
+  }]
+}
