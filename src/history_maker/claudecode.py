@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,12 +37,18 @@ logger = logging.getLogger(__name__)
 SEGNALI_LIMITE = (
     "usage limit",
     "rate limit",
+    "session limit",
     "limite di utilizzo",
     "limit reached",
-    "resets at",
     "try again later",
     "riprova piu tardi",
 )
+
+# L'ora del rinnovo compare in forme diverse — "resets at 3pm" ma anche
+# "resets 5:10pm (Europe/Rome)" — e cercare la sola parola "resets"
+# rischierebbe di scambiare per quota esaurita una trascrizione che la
+# contiene. Pretendere una cifra subito dopo tiene insieme le due cose.
+ORARIO_DI_RIPRESA = re.compile(r"resets\s+(?:at\s+)?\d", re.IGNORECASE)
 
 
 class LimiteUsoRaggiunto(RuntimeError):
@@ -98,8 +105,7 @@ def verifica_installazione() -> str:
 
 
 def costruisci_comando(
-    prompt: str,
-    sistema: str,
+    sistema_file: Path,
     cartelle: list[Path],
     modello: str,
 ) -> list[str]:
@@ -109,8 +115,8 @@ def costruisci_comando(
 
     ``--print``          modalita' non interattiva, stampa e termina.
     ``--output-format``  ``json``, per leggere anche l'esito e i consumi.
-    ``--system-prompt``  sostituisce il prompt di sistema di Claude Code
-                         con quello paleografico, che e' piu' corto e
+    ``--system-prompt-file``  sostituisce il prompt di sistema di Claude
+                         Code con quello paleografico, che e' piu' corto e
                          piu' pertinente.
     ``--allowedTools``   solo ``Read``: al lavoro serve leggere immagini,
                          nient'altro.
@@ -119,13 +125,23 @@ def costruisci_comando(
                          aspettare un consenso che in un ciclo di
                          migliaia di pagine nessuno darebbe.
     ``--add-dir``        autorizza la lettura della cartella immagini.
+
+    **I due testi lunghi non passano dalla riga di comando.** Il prompt
+    arriva sullo standard input e il prompt di sistema da un file. Non e'
+    un'eleganza: su Windows ``claude`` e' un file ``.cmd``, quindi la
+    chiamata passa da ``cmd.exe``, che interpreta a modo suo i caratteri
+    ``> | & ^ %`` e si ferma al primo ritorno a capo. L'elenco delle
+    pagine e' multiriga e il contesto archivistico contiene ``>``
+    (``Archivio di Stato di Chieti > Stato civile napoleonico >
+    Torrebruna``): passato come argomento arrivava troncato alla prima
+    riga, e il modello rispondeva — a ragione — di non sapere quali
+    pagine leggere.
     """
     comando = [
         verifica_installazione(),
         "--print",
-        prompt,
-        "--system-prompt",
-        sistema,
+        "--system-prompt-file",
+        str(sistema_file),
         "--output-format",
         "json",
         "--allowedTools",
@@ -155,12 +171,28 @@ def esegui(
     che il chiamante possa aspettare invece di scambiare l'esaurimento
     della quota per un errore di lettura.
     """
-    comando = costruisci_comando(prompt, sistema, cartelle, modello)
+    with tempfile.TemporaryDirectory(prefix="history-maker-") as temporanea:
+        sistema_file = Path(temporanea) / "sistema.txt"
+        sistema_file.write_text(sistema, encoding="utf-8")
+        return _esegui_con(
+            costruisci_comando(sistema_file, cartelle, modello), prompt, timeout
+        )
+
+
+def _esegui_con(comando: list[str], prompt: str, timeout: int) -> Esito:
     try:
         completato = subprocess.run(
             comando,
+            input=prompt,
             capture_output=True,
             text=True,
+            # Claude Code scrive in UTF-8, ma senza dirlo Python decodifica
+            # con la codifica preferita del sistema: su Windows e' una
+            # codepage a un byte, che storpia ogni carattere accentato. Su
+            # atti di stato civile italiani sarebbe corruzione silenziosa
+            # del risultato, non un dettaglio di visualizzazione.
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
             env=ambiente_solo_abbonamento(),
@@ -204,7 +236,9 @@ def esegui(
 
 def _sembra_limite(testo: str) -> bool:
     minuscolo = testo.lower()
-    return any(segnale in minuscolo for segnale in SEGNALI_LIMITE)
+    if any(segnale in minuscolo for segnale in SEGNALI_LIMITE):
+        return True
+    return bool(ORARIO_DI_RIPRESA.search(testo))
 
 
 # Il modello incornicia quasi sempre il JSON in un blocco markdown, anche

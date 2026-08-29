@@ -44,6 +44,12 @@ class Config:
     ridotte: Path
     trascrizioni: Path
     dataset: Path
+    # Le forme attestate del paese. Un progetto nuovo non ne ha ancora,
+    # e un file assente vale come glossario vuoto: la conoscenza locale
+    # si accumula strada facendo, non e' un prerequisito per partire.
+    glossario: Path = field(
+        default_factory=lambda: RADICE / "config" / "glossario-torrebruna.yaml"
+    )
     rete: Rete = field(default_factory=Rete)
     trascrizione: Trascrizione = field(default_factory=Trascrizione)
 
@@ -70,6 +76,7 @@ class Config:
             ridotte=_path("ridotte", "data/immagini_ridotte"),
             trascrizioni=_path("trascrizioni", "data/trascrizioni"),
             dataset=_path("dataset", "data/dataset"),
+            glossario=_path("glossario", "config/glossario-torrebruna.yaml"),
             rete=Rete(**(dati.get("rete") or {})),
             trascrizione=Trascrizione(**(dati.get("trascrizione") or {})),
         )

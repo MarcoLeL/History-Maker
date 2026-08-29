@@ -24,6 +24,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterator
 
+from history_maker import glossario, normalizza
 from history_maker.config import Config
 
 logger = logging.getLogger(__name__)
@@ -48,20 +49,30 @@ CREATE TABLE IF NOT EXISTS atti (
     data_evento     TEXT,
     ora_evento      TEXT,
     luogo           TEXT,
+    luogo_letto     TEXT,
     testo_integrale TEXT,
     affidabilita    TEXT,
     incertezze      TEXT
 );
 
+-- 'nome' e 'cognome' sono le forme su cui si conta; 'nome_letto' e
+-- 'cognome_letto' conservano cio' che c'era scritto sulla pagina, con il
+-- marcatore di dubbio compreso. Tenere le due cose separate e' quello che
+-- permette di normalizzare senza distruggere: la lettura originale resta
+-- sempre ispezionabile, e ogni normalizzazione e' reversibile.
 CREATE TABLE IF NOT EXISTS persone (
     id            INTEGER PRIMARY KEY,
     atto          INTEGER REFERENCES atti(id),
     ruolo         TEXT,
     nome          TEXT,
+    nome_letto    TEXT,
     cognome       TEXT,
+    cognome_letto TEXT,
+    incerto       INTEGER NOT NULL DEFAULT 0,
     eta           TEXT,
     professione   TEXT,
     residenza     TEXT,
+    residenza_letta TEXT,
     stato_vitale  TEXT,
     note          TEXT
 );
@@ -75,7 +86,8 @@ CREATE TABLE IF NOT EXISTS voci_indice (
     immagine    TEXT,
     numero_atto TEXT,
     nome        TEXT,
-    cognome     TEXT
+    cognome     TEXT,
+    cognome_letto TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_indice_registro ON voci_indice(registro);
@@ -109,6 +121,51 @@ def _anno_da_data(data: str | None, ripiego: int | None) -> int | None:
     return ripiego
 
 
+def _unifica_varianti(conn: sqlite3.Connection) -> list[normalizza.Proposta]:
+    """Riconduce le grafie della stessa famiglia a una forma sola.
+
+    Gira **a caricamento finito**, e non potrebbe essere altrimenti: una
+    variante si giudica per quanto ricorre nell'intero corpus, non dentro
+    la pagina o l'anno in cui capita. Una forma vista due volte in una
+    pagina e quindici altrove e' un'altra cosa da una vista due volte e
+    basta.
+
+    Tocca solo la colonna ``cognome``: ``cognome_letto`` conserva sempre
+    cio' che c'era scritto sulla carta, quindi ogni unificazione resta
+    ispezionabile e reversibile. Le varianti su cui il calcolo non se la
+    sente non vengono toccate: tornano indietro come proposte per il
+    glossario, dove decide chi conosce il paese.
+    """
+    frequenze = Counter(
+        {
+            cognome: quanti
+            for cognome, quanti in conn.execute(
+                "SELECT cognome, COUNT(*) FROM persone "
+                "WHERE cognome IS NOT NULL AND cognome <> '' GROUP BY cognome"
+            )
+        }
+    )
+    correzioni, proposte = normalizza.raggruppa_varianti(frequenze)
+
+    for variante, canonica in correzioni.items():
+        conn.execute(
+            "UPDATE persone SET cognome = ? WHERE cognome = ?", (canonica, variante)
+        )
+        # Le voci d'indice vanno unificate con la stessa mappa: sono la
+        # stessa famiglia letta da un'altra pagina, e normalizzarne una
+        # sola farebbe divergere proprio il confronto che la fase 5 usa
+        # come segnale piu' affidabile.
+        conn.execute(
+            "UPDATE voci_indice SET cognome = ? WHERE cognome = ?", (canonica, variante)
+        )
+
+    if correzioni:
+        logger.info("Varianti unificate da sole: %d", len(correzioni))
+    if proposte:
+        logger.info("Varianti da decidere nel glossario: %d", len(proposte))
+    return proposte
+
+
 def costruisci(config: Config) -> Path:
     """Costruisce il database SQLite e i CSV; restituisce il percorso del database."""
     config.dataset.mkdir(parents=True, exist_ok=True)
@@ -118,6 +175,20 @@ def costruisci(config: Config) -> Path:
 
     conn = sqlite3.connect(percorso_db)
     conn.executescript(SCHEMA_SQL)
+
+    # Le forme attestate del paese entrano qui: sono l'unica cosa che
+    # raddrizza le letture sbagliate in modo concorde, che nessuna
+    # statistica puo' scoprire perche' non c'e' nessun disaccordo da
+    # rilevare.
+    glossario_locale = glossario.Glossario.carica(config.glossario)
+    corrette: Counter[str] = Counter()
+
+    def _con_glossario(valore: str | None, campo: str) -> str | None:
+        pulito, _ = normalizza.separa_incertezza(valore)
+        corretto, applicate = glossario_locale.correggi_campo(pulito, campo)
+        for c in applicate:
+            corrette[f"{c.letto} -> {c.corretto}"] += 1
+        return corretto
 
     n_atti = n_persone = n_pagine = n_voci = 0
     for pagina in leggi_trascrizioni(config.trascrizioni):
@@ -135,13 +206,18 @@ def costruisci(config: Config) -> Path:
         )
         for voce in pagina.get("voci_indice") or []:
             conn.execute(
-                "INSERT INTO voci_indice (registro, immagine, numero_atto, nome, cognome) "
-                "VALUES (?,?,?,?,?)",
+                "INSERT INTO voci_indice (registro, immagine, numero_atto, nome, "
+                "cognome, cognome_letto) VALUES (?,?,?,?,?,?)",
                 (
                     origine.get("registro"),
                     origine.get("immagine"),
                     voce.get("numero_atto"),
-                    voce.get("nome"),
+                    # Le voci d'indice servono a un solo scopo: essere
+                    # confrontate con i cognomi letti negli atti. Un
+                    # marcatore di dubbio attaccato al valore farebbe
+                    # fallire il confronto proprio dove funziona meglio.
+                    normalizza.separa_incertezza(voce.get("nome"))[0],
+                    _con_glossario(voce.get("cognome"), "cognome"),
                     voce.get("cognome"),
                 ),
             )
@@ -151,8 +227,9 @@ def costruisci(config: Config) -> Path:
             cursore = conn.execute(
                 """INSERT INTO atti (registro, immagine, numero_atto, tipo, anno,
                                      data_atto, data_evento, ora_evento, luogo,
-                                     testo_integrale, affidabilita, incertezze)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                     luogo_letto, testo_integrale, affidabilita,
+                                     incertezze)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     origine.get("registro"),
                     origine.get("immagine"),
@@ -162,6 +239,7 @@ def costruisci(config: Config) -> Path:
                     atto.get("data_atto"),
                     atto.get("data_evento"),
                     atto.get("ora_evento"),
+                    _con_glossario(atto.get("luogo"), "luogo"),
                     atto.get("luogo"),
                     atto.get("testo_integrale"),
                     atto.get("affidabilita"),
@@ -171,23 +249,38 @@ def costruisci(config: Config) -> Path:
             id_atto = cursore.lastrowid
             n_atti += 1
             for persona in atto.get("persone") or []:
+                nome, nome_incerto = normalizza.separa_incertezza(persona.get("nome"))
+                _, cognome_incerto = normalizza.separa_incertezza(persona.get("cognome"))
+                cognome = _con_glossario(persona.get("cognome"), "cognome")
                 conn.execute(
-                    """INSERT INTO persone (atto, ruolo, nome, cognome, eta,
-                                            professione, residenza, stato_vitale, note)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    """INSERT INTO persone (atto, ruolo, nome, nome_letto,
+                                            cognome, cognome_letto, incerto, eta,
+                                            professione, residenza, residenza_letta,
+                                            stato_vitale, note)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         id_atto,
                         persona.get("ruolo"),
+                        nome,
                         persona.get("nome"),
+                        cognome,
                         persona.get("cognome"),
+                        int(nome_incerto or cognome_incerto),
                         persona.get("eta"),
                         persona.get("professione"),
+                        # La residenza e' una frase intera che contiene il
+                        # toponimo: "in questo Comune di Torrebruna, strada
+                        # a piedi della Lama di Nuorro". Il glossario
+                        # corregge dentro la frase, non l'intero campo.
+                        _con_glossario(persona.get("residenza"), "luogo"),
                         persona.get("residenza"),
                         persona.get("stato_vitale"),
                         persona.get("note"),
                     ),
                 )
                 n_persone += 1
+
+    proposte = _unifica_varianti(conn)
 
     conn.execute(
         "INSERT INTO atti_fts(rowid, testo_integrale, numero_atto, luogo) "
@@ -199,10 +292,59 @@ def costruisci(config: Config) -> Path:
         n_pagine, n_atti, n_persone, n_voci,
     )
 
+    if corrette:
+        logger.info(
+            "Glossario applicato: %s",
+            ", ".join(f"{k} ({n})" for k, n in sorted(corrette.items())),
+        )
+
     _esporta_csv(conn, config.dataset)
     (config.dataset / "sintesi.md").write_text(sintesi(conn, config), encoding="utf-8")
+    _scrivi_proposte(config, proposte)
     conn.close()
     return percorso_db
+
+
+def _scrivi_proposte(config: Config, proposte: list[normalizza.Proposta]) -> Path:
+    """Scrive le varianti da decidere gia' in forma di glossario.
+
+    Il file e' pronto da incollare in ``glossario-*.yaml``: chi decide non
+    deve ricopiare niente, solo cancellare le righe che non gli tornano.
+    Le forme sono ordinate per quanto ricorrono, perche' una vista sei
+    volte merita attenzione e una vista una volta sola quasi mai.
+    """
+    percorso = config.dataset / "glossario-proposto.yaml"
+    if not proposte:
+        percorso.write_text(
+            "# Nessuna variante da decidere: il calcolo se l'e' cavata da solo.\n",
+            encoding="utf-8",
+        )
+        return percorso
+
+    righe = [
+        "# Varianti su cui il calcolo non se la sente di decidere.",
+        "#",
+        "# Sono forme troppo simili per essere famiglie estranee e troppo alla",
+        "# pari per stabilire quale sia la lettura buona. Qui serve chi conosce",
+        "# il paese: un cognome raro puo' essere una lettura sbagliata, ma anche",
+        "# un forestiero vero — una sposa di un comune vicino, un soldato, un",
+        "# prete — e quello e' un dato storico, non rumore.",
+        "#",
+        "# Per accettare una proposta, sposta la riga sotto 'cognomi:' nel",
+        "# glossario. Per rifiutarla, cancellala: se la forma e' giusta cosi',",
+        "# elencala sotto 'confermati:' e non verra' piu' riproposta.",
+        "",
+        "cognomi:",
+    ]
+    for p in proposte:
+        righe.append(f"  # {p.motivo}")
+        righe.append(f"  {p.proposto}:")
+        righe.append(f"    - {p.letto}")
+    righe.append("")
+
+    percorso.write_text("\n".join(righe), encoding="utf-8")
+    logger.info("Proposte per il glossario: %s", percorso)
+    return percorso
 
 
 def _esporta_csv(conn: sqlite3.Connection, cartella: Path) -> None:

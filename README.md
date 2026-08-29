@@ -65,17 +65,9 @@ Per la fase di trascrizione serve **Claude Code**, che usa il tuo
 abbonamento Claude Pro — nessun credito API, nessun costo aggiuntivo:
 
 ```bash
-# macOS / Linux / WSL
-curl -fsSL https://claude.ai/install.sh | bash
-
-# Windows PowerShell
-irm https://claude.ai/install.ps1 | iex
-
+npm install -g @anthropic-ai/claude-code
 claude          # una volta sola, per autenticarti con l'abbonamento
 ```
-
-`claude` è il programma a riga di comando: il plugin per gli IDE non lo
-sostituisce, gli fa solo da ponte.
 
 **Nessuna spesa oltre l'abbonamento.** Il progetto non chiama mai l'API a
 consumo: non ha la dipendenza `anthropic` e non legge nessuna chiave. Se
@@ -130,9 +122,7 @@ python -m history_maker revisione
 ```
 
 Per il giro completo su un anno solo, comando per comando, vedi
-**[`docs/prima-esecuzione.md`](docs/prima-esecuzione.md)**. Se lavori in
-PyCharm, il progetto si apre già con le configurazioni di esecuzione
-pronte: vedi **[`docs/pycharm.md`](docs/pycharm.md)**.
+**[`docs/prima-esecuzione.md`](docs/prima-esecuzione.md)**.
 
 ### Consiglio sull'ordine
 
@@ -302,7 +292,7 @@ resta la fonte da consultare per l'uso che ne farai.
 pip install -e ".[dev]" && pytest
 ```
 
-I 113 test girano offline e non consumano quota: il formato del portale
+I 109 test girano offline e non consumano quota: il formato del portale
 è collaudato su manifest campione, la fase di download contro un finto
 server IIIF locale che riproduce anche il 403 sulla sintassi
 `/full/full/0/`, e la fase di trascrizione contro un finto eseguibile

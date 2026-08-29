@@ -79,12 +79,21 @@ def _connessione(config: Config) -> sqlite3.Connection:
     return conn
 
 
+# La fase 4 unifica gia' le varianti su cui l'evidenza e' schiacciante,
+# e scrive il risultato in 'cognome'. Questo modulo deve percio' guardare
+# 'cognome_letto', cioe' cio' che c'era scritto sulla pagina: sulle forme
+# gia' normalizzate non ci sarebbe piu' nessuna discordanza da trovare,
+# e la fase 5 si limiterebbe a confermare il lavoro della fase 4.
+LETTURA = "COALESCE(NULLIF(cognome_letto, ''), cognome)"
+
+
 def frequenze_cognomi(conn: sqlite3.Connection) -> Counter[str]:
-    """Quante volte ricorre ciascun cognome negli atti."""
+    """Quante volte ricorre ciascuna LETTURA di cognome negli atti."""
     return Counter(
-        riga["cognome"]
+        riga["letto"]
         for riga in conn.execute(
-            "SELECT cognome FROM persone WHERE cognome IS NOT NULL AND cognome <> ''"
+            f"SELECT {LETTURA} AS letto FROM persone "
+            f"WHERE {LETTURA} IS NOT NULL AND {LETTURA} <> ''"
         )
     )
 
@@ -93,7 +102,8 @@ def _riferimenti(conn: sqlite3.Connection, cognome: str, limite: int = 3) -> lis
     """Qualche atto in cui il cognome compare, per poter andare a vedere."""
     righe = conn.execute(
         "SELECT a.anno, a.numero_atto, a.immagine FROM persone p "
-        "JOIN atti a ON a.id = p.atto WHERE p.cognome = ? LIMIT ?",
+        f"JOIN atti a ON a.id = p.atto WHERE {LETTURA.replace('cognome', 'p.cognome')} = ? "
+        "LIMIT ?",
         (cognome, limite),
     ).fetchall()
     return [
@@ -150,17 +160,18 @@ def discordanze_con_indici(conn: sqlite3.Connection) -> list[Segnalazione]:
     """
     per_registro_atti: dict[str, set[str]] = defaultdict(set)
     for riga in conn.execute(
-        "SELECT a.registro, p.cognome FROM persone p JOIN atti a ON a.id = p.atto "
-        "WHERE p.cognome IS NOT NULL AND p.cognome <> ''"
+        f"SELECT a.registro, {LETTURA.replace('cognome', 'p.cognome')} AS letto "
+        "FROM persone p JOIN atti a ON a.id = p.atto "
+        f"WHERE {LETTURA.replace('cognome', 'p.cognome')} IS NOT NULL"
     ):
-        per_registro_atti[riga["registro"]].add(riga["cognome"])
+        per_registro_atti[riga["registro"]].add(riga["letto"])
 
     per_registro_indice: dict[str, set[str]] = defaultdict(set)
     for riga in conn.execute(
-        "SELECT registro, cognome FROM voci_indice "
-        "WHERE cognome IS NOT NULL AND cognome <> ''"
+        f"SELECT registro, {LETTURA} AS letto FROM voci_indice "
+        f"WHERE {LETTURA} IS NOT NULL AND {LETTURA} <> ''"
     ):
-        per_registro_indice[riga["registro"]].add(riga["cognome"])
+        per_registro_indice[riga["registro"]].add(riga["letto"])
 
     segnalazioni: list[Segnalazione] = []
     for registro, dall_indice in sorted(per_registro_indice.items()):

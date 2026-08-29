@@ -59,9 +59,18 @@ def _link_ark(driver: webdriver.Chrome) -> set[str]:
             trovati.add(href.split("?")[0].rstrip("/"))
     for match in ARK_PATTERN.finditer(driver.page_source):
         trovati.add(match.group(0).split("?")[0].rstrip("/"))
-    # Gli ark che puntano al fondo o all'archivio, non a una galleria, non
-    # hanno il segmento finale con il codice dell'unita': si scartano.
-    return {u for u in trovati if iiif.estrai_ark_id(u) and u.count("/") >= 6}
+    # Gli ark che puntano al fondo o all'archivio, non a una galleria, si
+    # scartano. Il criterio e' il prefisso dell'identificativo, non la
+    # forma dell'URL: le gallerie sono le unita' archivistiche, e solo
+    # quelle hanno un id ``an_ua...``. La pagina dei risultati emette lo
+    # stesso ark ora con il segmento finale della scheda
+    # (``/ark:/12657/an_ua19944535/w9DWR8x``) ora senza
+    # (``/ark:/12657/an_ua18284973``): contare i segmenti dell'URL
+    # scarterebbe la seconda forma, che e' quella oggi in uso.
+    return {
+        u for u in trovati
+        if (ark_id := iiif.estrai_ark_id(u)) and ark_id.startswith("an_ua")
+    }
 
 
 def _scorri_fino_in_fondo(driver: webdriver.Chrome, pause: float, max_giri: int = 40) -> None:

@@ -5,9 +5,11 @@ imita la forma dell'output di ``--output-format json``: cosi' i test non
 consumano quota dell'abbonamento e girano ovunque.
 """
 
+import json
 import os
 
 import pytest
+from conftest import FINTI, installa_finto_claude
 
 from history_maker import claudecode
 from history_maker.claudecode import LimiteUsoRaggiunto, estrai_json
@@ -47,12 +49,13 @@ def test_risposta_senza_json_solleva(testo):
 
 # --- composizione del comando ---------------------------------------------
 
-def test_comando_contiene_le_opzioni_necessarie(tmp_path):
+def test_comando_contiene_le_opzioni_necessarie(tmp_path, finto_claude):
+    sistema = tmp_path / "sistema.txt"
     comando = claudecode.costruisci_comando(
-        "prompt", "sistema", [tmp_path / "a", tmp_path / "b"], "claude-opus-5"
+        sistema, [tmp_path / "a", tmp_path / "b"], "claude-opus-5"
     )
-    assert "--print" in comando and "prompt" in comando
-    assert comando[comando.index("--system-prompt") + 1] == "sistema"
+    assert "--print" in comando
+    assert comando[comando.index("--system-prompt-file") + 1] == str(sistema)
     assert comando[comando.index("--output-format") + 1] == "json"
     assert comando[comando.index("--model") + 1] == "claude-opus-5"
     # Al lavoro serve solo leggere immagini.
@@ -64,6 +67,23 @@ def test_comando_contiene_le_opzioni_necessarie(tmp_path):
     assert comando.count("--add-dir") == 2
 
 
+def test_i_testi_lunghi_non_passano_dalla_riga_di_comando(tmp_path, finto_claude):
+    """Ne' il prompt ne' il prompt di sistema stanno negli argomenti.
+
+    Su Windows 'claude' e' un .cmd, quindi la chiamata passa da cmd.exe,
+    che si ferma al primo ritorno a capo e interpreta '>' come una
+    redirezione. L'elenco delle pagine e' multiriga e il contesto
+    archivistico contiene '>': passarli come argomenti li mutila.
+    """
+    comando = claudecode.costruisci_comando(
+        tmp_path / "sistema.txt", [tmp_path], "claude-opus-5"
+    )
+    riga = " ".join(comando)
+    assert "\n" not in riga
+    assert ">" not in riga
+    assert "|" not in riga
+
+
 # --- riconoscimento dell'esaurimento quota ---------------------------------
 
 @pytest.mark.parametrize(
@@ -72,22 +92,66 @@ def test_comando_contiene_le_opzioni_necessarie(tmp_path):
         "Claude usage limit reached. Resets at 3pm",
         "You have hit the rate limit",
         "Limite di utilizzo raggiunto",
+        # Il messaggio che ha originato questo test: la prima esecuzione
+        # vera si e' fermata cosi' e nessun segnale lo intercettava, per
+        # cui l'esaurimento della quota e' stato scambiato per una pagina
+        # illeggibile e ritentato dieci volte — bruciando altra quota
+        # invece di fermarsi e dire quando riprovare.
+        "You've hit your session limit · resets 5:10pm (Europe/Rome)",
+        "Session limit reached · resets 9am",
     ],
 )
 def test_messaggi_di_quota_riconosciuti(messaggio):
     assert claudecode._sembra_limite(messaggio)
 
 
-def test_errore_normale_non_scambiato_per_quota():
-    assert not claudecode._sembra_limite("File not found: /x/0001.jpg")
+@pytest.mark.parametrize(
+    "messaggio",
+    [
+        "File not found: /x/0001.jpg",
+        # "resets" da sola non basta: puo' comparire in un testo trascritto.
+        "l'atto dice che il termine si resets ogni anno",
+    ],
+)
+def test_errore_normale_non_scambiato_per_quota(messaggio):
+    assert not claudecode._sembra_limite(messaggio)
 
 
 # --- ciclo completo contro un finto eseguibile -----------------------------
 
-def test_esecuzione_riuscita(finto_claude, tmp_path):
-    finto_claude.programma(
-        finto_claude.risposta('```json\n[{"file": "0001.jpg", "atti": []}]\n```')
+@pytest.fixture
+def finto_claude(tmp_path, monkeypatch):
+    """Installa un finto 'claude' nel PATH; restituisce come programmarlo."""
+    uscite = tmp_path / "risposta.json"
+
+    installa_finto_claude(
+        tmp_path, monkeypatch, FINTI / "eco_risposta.py", FINTO_RISPOSTA=str(uscite)
     )
+
+    def programma(risultato: str, is_error: bool = False, subtype: str = "success"):
+        uscite.write_text(
+            json.dumps(
+                {
+                    "is_error": is_error,
+                    "subtype": subtype,
+                    "result": risultato,
+                    "total_cost_usd": 0.04,
+                    "usage": {
+                        "input_tokens": 4,
+                        "cache_creation_input_tokens": 7000,
+                        "cache_read_input_tokens": 43000,
+                        "output_tokens": 150,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    return programma
+
+
+def test_esecuzione_riuscita(finto_claude, tmp_path):
+    finto_claude('```json\n[{"file": "0001.jpg", "atti": []}]\n```')
     esito = claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
 
     assert esito.ok
@@ -99,24 +163,60 @@ def test_esecuzione_riuscita(finto_claude, tmp_path):
 
 def test_esecuzione_fallita_non_solleva(finto_claude, tmp_path):
     """Un errore normale torna come esito negativo, non come eccezione."""
-    finto_claude.programma(
-        finto_claude.risposta(
-            "qualcosa e' andato storto", is_error=True, subtype="error_during_execution"
-        )
-    )
+    finto_claude("qualcosa e' andato storto", is_error=True, subtype="error_during_execution")
     esito = claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
     assert not esito.ok and esito.errore == "error_during_execution"
 
 
 def test_quota_esaurita_solleva(finto_claude, tmp_path):
     """L'esaurimento della quota va distinto da un errore di lettura."""
-    finto_claude.programma(
-        finto_claude.risposta(
-            "Claude usage limit reached. Resets at 3pm", is_error=True, subtype="error"
-        )
-    )
+    finto_claude("Claude usage limit reached. Resets at 3pm", is_error=True, subtype="error")
     with pytest.raises(LimiteUsoRaggiunto):
         claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
+
+
+def test_gli_accenti_sopravvivono_al_processo_figlio(tmp_path, monkeypatch):
+    """La risposta e' UTF-8 anche dove il sistema preferisce altro.
+
+    Senza dirlo esplicitamente, Python decodifica l'output del figlio con
+    la codifica preferita del sistema: su Windows una codepage a un byte,
+    che trasforma 'addì' in 'addÃ¬'. Su atti italiani sarebbe corruzione
+    silenziosa del risultato del lavoro.
+    """
+    installa_finto_claude(tmp_path, monkeypatch, FINTI / "risposta_accentata.py")
+
+    esito = claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
+
+    assert esito.ok
+    assert "addì ventisette" in esito.testo
+    assert "città di Torrebruna" in esito.testo
+    assert "trentadué" in esito.testo
+
+
+def test_il_prompt_arriva_intatto_al_processo_figlio(tmp_path, monkeypatch):
+    """Il caso che ha fermato la prima esecuzione vera.
+
+    Il prompt e' multiriga e il contesto archivistico contiene '>' e '|'.
+    Passato come argomento su Windows arrivava troncato alla prima riga, e
+    il modello rispondeva di non sapere quali pagine leggere — senza che
+    nulla, nel codice che compone il prompt, fosse sbagliato.
+    """
+    installa_finto_claude(tmp_path, monkeypatch, FINTI / "eco_prompt.py")
+
+    prompt = (
+        "Trascrivi queste 2 pagine.\n"
+        "- C:\\dati\\0001.jpg\n"
+        "    contesto: Archivio di Stato di Chieti > Stato civile "
+        "napoleonico > Torrebruna | anno: 1809\n"
+        "- C:\\dati\\0002.jpg & altro 100% (parentesi)\n"
+    )
+    sistema = "Sei un paleografo.\nRispondi in JSON: {\"a\": 1} & basta.\n"
+
+    esito = claudecode.esegui(prompt, sistema, [tmp_path], "claude-opus-5", timeout=60)
+
+    ricevuto = json.loads(esito.testo)
+    assert ricevuto["prompt"] == prompt
+    assert ricevuto["sistema"] == sistema
 
 
 def test_claude_assente_da_messaggio_utile(monkeypatch):
@@ -151,44 +251,13 @@ def test_ambiente_intatto_senza_chiavi(monkeypatch):
     assert claudecode.ambiente_solo_abbonamento() == dict(os.environ)
 
 
-def test_chiave_api_non_raggiunge_il_processo_figlio(finto_claude, tmp_path, monkeypatch):
-    """Verifica end-to-end: il processo figlio non vede la chiave."""
+def test_chiave_api_non_raggiunge_il_processo_figlio(tmp_path, monkeypatch):
+    """Verifica end-to-end: il finto 'claude' non vede la chiave."""
+    spia = tmp_path / "visto.txt"
+    installa_finto_claude(
+        tmp_path, monkeypatch, FINTI / "spia_ambiente.py", FINTO_SPIA=str(spia)
+    )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-non-deve-passare")
-    finto_claude.programma(finto_claude.risposta("[]"))
 
-    claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=60)
-    assert finto_claude.chiave_api_vista == "ASSENTE"
-
-
-def test_il_finto_claude_e_trovabile_dal_sistema(finto_claude):
-    """Il lanciatore deve avere il nome che il sistema sa eseguire.
-
-    Su Windows ``shutil.which`` cerca solo i nomi con un'estensione
-    elencata in PATHEXT: un file chiamato 'claude' senza estensione non
-    verrebbe mai trovato, e i test della fase 3 fallirebbero tutti.
-    """
-    import shutil
-
-    trovato = shutil.which("claude")
-    assert trovato is not None
-    atteso = "claude.cmd" if os.name == "nt" else "claude"
-    assert os.path.basename(trovato) == atteso
-
-
-def test_lanciatore_windows_ha_estensione_cmd(tmp_path):
-    """Collaudabile da Unix: su Windows deve nascere un .cmd, non 'claude'.
-
-    Senza estensione, PATHEXT non lo troverebbe e ogni test della fase 3
-    fallirebbe su Windows con 'claude non e' riconosciuto'.
-    """
-    from finto_claude import installa
-
-    class SenzaEffetti:
-        def setenv(self, *args):
-            pass
-
-    cartella = tmp_path / "finto"
-    installa(cartella, SenzaEffetti(), windows=True)
-    prodotti = {p.name for p in cartella.iterdir()}
-    assert "claude.cmd" in prodotti and "claude" not in prodotti
-    assert "@echo off" in (cartella / "claude.cmd").read_text(encoding="utf-8")
+    claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
+    assert spia.read_text().strip() == "ASSENTE"

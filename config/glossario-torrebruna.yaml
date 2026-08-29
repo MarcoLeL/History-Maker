@@ -1,0 +1,54 @@
+# Forme attestate di Torrebruna: quello che la statistica non puo' sapere.
+#
+# La fase 5 sfrutta la ridondanza dei registri per scoprire le letture
+# sbagliate, ma sa solo scegliere FRA LE FORME CHE QUALCUNO HA LETTO. Se
+# una grafia viene letta male sempre allo stesso modo, il consenso e'
+# concorde e sbagliato, e nessuna quantita' di dati lo corregge: la
+# rileggerebbe male anche la millesima volta.
+#
+# Due esempi veri, dalle prime pagine del 1809:
+#
+#   "Rua di Nuorro"     letto "Lama di Nuorro", due volte su due, concordi.
+#                       Per una frequenza non c'e' niente da segnalare.
+#   "strada Trascinella"  letto "Trafficinella" e "Frascinella", una volta
+#                       ciascuna. La forma giusta non compare MAI nei dati,
+#                       quindi nessuna normalizzazione puo' arrivarci.
+#
+# Questo file e' l'unico posto dove entra la conoscenza del paese. Serve a
+# due cose, e la prima vale piu' della seconda:
+#
+#   1. entra nel PROMPT, cosi' il modello riconosce il toponimo mentre
+#      legge, invece di indovinarlo. Previene l'errore, non lo ripara;
+#   2. entra nella fase 4, che mappa le letture errate gia' raccolte sulla
+#      forma corretta senza ritrascrivere niente (e senza consumare quota).
+#
+# La lettura originale resta sempre in 'cognome_letto' / 'residenza_letta':
+# correggere qui non cancella mai cio' che c'era scritto sulla carta.
+
+# Toponimi del comune: strade, contrade, porte, chiese, localita'.
+# La chiave e' la forma corretta; l'elenco sono le letture errate viste.
+# Il confronto ignora maiuscole e accenti e avviene dentro il testo, non
+# sull'intero campo: "strada a piedi della Lama di Nuorro" diventa
+# "strada a piedi della Rua di Nuorro".
+toponimi:
+  Rua di Nuorro:
+    - Lama di Nuorro
+  strada Trascinella:
+    - strada Trafficinella
+    - strada Frascinella
+    - Trafficinella
+    - Frascinella
+
+# Cognomi delle famiglie del paese. Stessa forma: chiave corretta,
+# elenco delle letture errate da ricondurvi.
+#
+# Attenzione: qui NON vanno i cognomi dei forestieri. Una sposa che arriva
+# da un comune vicino porta un cognome che a Torrebruna e' raro ed e'
+# giusto che resti raro: e' il segnale della mobilita' matrimoniale fra
+# paesi, ed e' fra i piu' interessanti che questi registri contengano.
+cognomi: {}
+
+# Forme che il modello legge in modo dubbio ma che sono corrette cosi'.
+# Confermare una lettura rara vale quanto correggerla: metterla qui la
+# toglie dalle segnalazioni future senza cambiare il dato.
+confermati: []

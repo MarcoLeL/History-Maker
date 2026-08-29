@@ -1,16 +1,1 @@
-.venv/
-__pycache__/
-*.pyc
-.env
-.pytest_cache/
-data/
-!data/.gitkeep
-*.egg-info/
-dist/
-build/
-
-# PyCharm: si versionano solo le configurazioni di esecuzione, che
-# sono condivise e utili. Il resto di .idea/ (workspace, indici,
-# preferenze personali) e' specifico della macchina e va ignorato.
-.idea/*
-!.idea/runConfigurations/
+/data/

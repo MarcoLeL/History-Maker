@@ -24,15 +24,22 @@ from __future__ import annotations
 import json
 import logging
 import time
+from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image
 
-from history_maker import claudecode
+from history_maker import claudecode, glossario
 from history_maker.catalogo import Catalogo, Registro, pertinente
 from history_maker.config import Config
-from history_maker.prompt import ISTRUZIONE_GRUPPO, SCHEMA_A_PAROLE, SISTEMA, descrivi_pagina
+from history_maker.prompt import (
+    ISTRUZIONE_GRUPPO,
+    SCHEMA_A_PAROLE,
+    SISTEMA,
+    descrivi_forme_note,
+    descrivi_pagina,
+)
 from history_maker.schema import PaginaNonValida, valida_pagina
 
 logger = logging.getLogger(__name__)
@@ -125,7 +132,27 @@ def prepara_immagine(pagina: Pagina, config: Config) -> Path:
     return destinazione
 
 
-def costruisci_prompt(pagine: list[Pagina], percorsi: list[Path]) -> str:
+@lru_cache(maxsize=4)
+def _forme_note_da(percorso: Path) -> str:
+    """Il blocco di forme attestate, letto una volta sola.
+
+    La trascrizione di un secolo sono migliaia di invocazioni: rileggere
+    il glossario da disco a ogni gruppo di quattro pagine sarebbe uno
+    spreco silenzioso.
+    """
+    toponimi, cognomi = glossario.Glossario.carica(percorso).forme_note()
+    return descrivi_forme_note(toponimi, cognomi)
+
+
+def _forme_note(config: Config) -> str:
+    return _forme_note_da(config.glossario)
+
+
+def costruisci_prompt(
+    pagine: list[Pagina],
+    percorsi: list[Path],
+    forme_note: str = "",
+) -> str:
     """Istruzione per un gruppo di pagine."""
     elenco = "\n".join(
         descrivi_pagina(
@@ -134,7 +161,7 @@ def costruisci_prompt(pagine: list[Pagina], percorsi: list[Path]) -> str:
         for pagina, percorso in zip(pagine, percorsi)
     )
     return ISTRUZIONE_GRUPPO.format(
-        quante=len(pagine), elenco=elenco, schema=SCHEMA_A_PAROLE
+        quante=len(pagine), elenco=elenco, forme_note=forme_note, schema=SCHEMA_A_PAROLE
     )
 
 
@@ -202,7 +229,7 @@ def trascrivi_gruppo(config: Config, pagine: list[Pagina]) -> Esito:
 
     esito = Esito(chiamate=1)
     risultato = claudecode.esegui(
-        prompt=costruisci_prompt(pagine, percorsi),
+        prompt=costruisci_prompt(pagine, percorsi, _forme_note(config)),
         sistema=SISTEMA,
         cartelle=cartelle,
         modello=config.trascrizione.modello,

@@ -9,6 +9,7 @@ perderlo.
 import json
 
 import pytest
+from conftest import FINTI, installa_finto_claude
 from PIL import Image
 
 from history_maker import claudecode, transcribe
@@ -54,6 +55,44 @@ def pagine(config, registro):
     return transcribe.pagine_da_trascrivere(config)
 
 
+@pytest.fixture
+def finto_claude(tmp_path, monkeypatch):
+    """Finto 'claude' che registra ogni invocazione e risponde a comando."""
+    copione = tmp_path / "copione.json"
+    registro_chiamate = tmp_path / "chiamate.log"
+
+    # Una riga per invocazione: il prompt contiene ritorni a capo, quindi
+    # registrarlo per intero falserebbe il conteggio delle chiamate.
+    installa_finto_claude(
+        tmp_path,
+        monkeypatch,
+        FINTI / "copione.py",
+        FINTO_COPIONE=str(copione),
+        FINTO_CHIAMATE=str(registro_chiamate),
+    )
+
+    class Finto:
+        @staticmethod
+        def risposta(testo, is_error=False, subtype="success"):
+            return {
+                "is_error": is_error, "subtype": subtype, "result": testo,
+                "total_cost_usd": 0.04,
+                "usage": {"input_tokens": 4, "cache_creation_input_tokens": 7000,
+                          "cache_read_input_tokens": 43000, "output_tokens": 150},
+            }
+
+        def programma(self, *risposte):
+            copione.write_text(json.dumps(list(risposte)), encoding="utf-8")
+
+        @property
+        def chiamate(self) -> list[str]:
+            if not registro_chiamate.exists():
+                return []
+            return [r for r in registro_chiamate.read_text().splitlines() if r.strip()]
+
+    return Finto()
+
+
 def _pagina_json(nome, numero):
     return {
         "file": nome, "tipo_pagina": "atti", "anno_indicato": "1866",
@@ -84,7 +123,7 @@ def test_le_pagine_vanno_a_gruppi(config, pagine, finto_claude):
 
     assert esito.chiamate == 2
     assert esito.trascritte == 6 and esito.fallite == 0
-    assert finto_claude.chiamate == 2
+    assert len(finto_claude.chiamate) == 2
 
 
 def test_ogni_pagina_finisce_nel_proprio_file(config, pagine, registro, finto_claude):

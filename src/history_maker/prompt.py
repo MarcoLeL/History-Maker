@@ -115,7 +115,7 @@ ISTRUZIONE_GRUPPO = """Trascrivi queste {quante} pagine di registri di stato civ
 del comune di Torrebruna (Chieti). Leggile tutte con lo strumento Read.
 
 {elenco}
-
+{forme_note}
 {schema}
 
 Rispondi con un ARRAY JSON di {quante} oggetti, uno per pagina, nello
@@ -130,3 +130,37 @@ def descrivi_pagina(percorso: str, contesto: str | None, anno, tipologia: str | 
         f"    contesto: {contesto or 'n.d.'} | anno: {anno or 'n.d.'} | "
         f"tipologia: {tipologia or 'n.d.'}"
     )
+
+
+def descrivi_forme_note(toponimi: list[str], cognomi: list[str]) -> str:
+    """Le forme attestate del paese, da mostrare al modello mentre legge.
+
+    E' l'uso piu' importante del glossario, e viene prima della
+    correzione: una lettura sbagliata **in modo concorde** — 'Rua di
+    Nuorro' letto sempre 'Lama di Nuorro' — non lascia nessuna traccia
+    statistica, perche' non c'e' nessun disaccordo da rilevare. L'unico
+    momento in cui si puo' intervenire e' mentre si guarda la carta.
+
+    Il rischio speculare e' che l'elenco faccia *vedere* quello che
+    contiene: per questo e' presentato come repertorio da cui attingere
+    per sciogliere un dubbio, mai come lista di risposte attese, e resta
+    in piedi la regola che un dato illeggibile resta null.
+    """
+    if not toponimi and not cognomi:
+        return ""
+
+    righe = [
+        "",
+        "FORME ATTESTATE DEL PAESE",
+        "Sono grafie gia' verificate sugli originali di questo comune. Usale",
+        "per sciogliere un dubbio quando la tua lettura ci si avvicina, non",
+        "per sostituire cio' che vedi: se sulla carta c'e' chiaramente",
+        "altro, trascrivi quello che c'e'. Se non riesci a leggere, il campo",
+        "resta null come sempre — non scegliere dall'elenco per riempirlo.",
+    ]
+    if toponimi:
+        righe.append("Luoghi e strade: " + "; ".join(toponimi) + ".")
+    if cognomi:
+        righe.append("Cognomi del paese: " + "; ".join(cognomi) + ".")
+    righe.append("")
+    return "\n".join(righe)

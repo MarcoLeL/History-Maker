@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: history-maker
+Version: 0.1.0
+Summary: Raccolta, scaricamento e trascrizione degli atti di stato civile di Torrebruna (1809-1900) dal Portale Antenati
+Requires-Python: >=3.10
+Requires-Dist: selenium>=4.20
+Requires-Dist: requests>=2.31
+Requires-Dist: python-slugify>=8.0
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: Pillow>=10.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
