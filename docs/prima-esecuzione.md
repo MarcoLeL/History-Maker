@@ -11,6 +11,21 @@ cd History-Maker
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
+```
+
+Per la fase 3 serve una chiave gratuita di Google AI Studio, che si
+prende su <https://aistudio.google.com/apikey>:
+
+```bash
+export GEMINI_API_KEY="la-tua-chiave"       # bash
+$env:GEMINI_API_KEY = "la-tua-chiave"       # PowerShell
+```
+
+Se preferisci restare su Claude Code con l'abbonamento, metti
+`backend: claude-code` in `config/torrebruna.yaml` e installa la CLI —
+allora nessuna chiave serve:
+
+```bash
 npm install -g @anthropic-ai/claude-code
 claude          # una volta sola, per autenticarti con l'abbonamento
 ```
@@ -29,7 +44,7 @@ python -m history_maker catalog --scartati    # e perché ha escluso il resto
 python -m history_maker download --anno 1809 --elenca   # prima vedi cosa farebbe
 python -m history_maker download --anno 1809
 
-# 3. Trascrivi (usa l'abbonamento, non l'API)
+# 3. Trascrivi
 python -m history_maker transcribe --anno 1809 --stima
 python -m history_maker transcribe --anno 1809 --limite 8    # prova su 8 pagine
 python -m history_maker transcribe --anno 1809               # il resto
@@ -57,8 +72,9 @@ data/
 │       ├── 0002.jpg
 │       └── ...
 ├── immagini_ridotte/
-│   └── 1809-nati-19944535/          ← copie a 1568 px che legge Claude Code
-│       └── 0001.jpg                    (gli originali restano intatti)
+│   └── 1809-nati-19944535/          ← le copie che legge il modello:
+│       ├── 0001-sinistra.jpg           le due facciate a 1568 px di lato
+│       └── 0001-destra.jpg             lungo (gli originali restano intatti)
 ├── trascrizioni/
 │   └── 1809-nati-19944535/
 │       ├── 0001.json                ← un JSON per pagina, con gli atti

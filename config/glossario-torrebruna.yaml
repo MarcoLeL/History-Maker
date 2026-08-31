@@ -31,13 +31,48 @@
 # sull'intero campo: "strada a piedi della Lama di Nuorro" diventa
 # "strada a piedi della Rua di Nuorro".
 toponimi:
+  # Confermate da chi conosce il paese. Le grafie sotto ciascuna sono
+  # quelle davvero incontrate nei registri del 1809.
+  # La chiave e' il solo nome della contrada, senza 'strada' o 'via': la
+  # sostituzione avviene dentro la frase, che quel termine ce l'ha gia'.
+  # Scrivendo 'strada Trascinella' si otterrebbe 'strada della strada
+  # Trascinella'.
+  Trascinella:
+    # Sette letture diverse, e la forma giusta non compare in NESSUNA di
+    # esse: e' il caso che nessuna statistica avrebbe potuto raddrizzare.
+    - Fiascinella
+    - Frascinella
+    - Fraccinella
+    - Fraginella
+    - Fresinella
+    - Trecinella
+    - Trafficinella
   Rua di Nuorro:
     - Lama di Nuorro
-  strada Trascinella:
-    - strada Trafficinella
-    - strada Frascinella
-    - Trafficinella
-    - Frascinella
+    - Rua di Nuovo
+    - Via di Nuovo
+    - Bua di Nuovo
+    # Verificate sull'originale (processetti/0048): la 'R' di questa mano
+    # ha un occhiello che la fa leggere 'B' o 'V', e 'Nuorro' diventa
+    # 'Ricovro'. Sulla stessa formula, in un altro registro, il modello
+    # legge invece 'a Capo la Rua di Nuorro' senza esitare.
+    - Via di Ricovro
+    - Rua di Ricovro
+    # Verificata sull'originale (processetti/0056), stessa formula
+    # 'a Capo la Rua di Nuorro' letta altrove senza esitazione.
+    - Cesa di nuovo
+    - Cesa di Nuovo
+  Porta Murella:
+    - Porta delle Murelle
+    - Porta delle Muselle
+    - Portamurella
+    - Portanuvella
+    - Porta murella
+  # Accettati dalle proposte del giro 1809-1810.
+  strada della Porta Murella:
+    - strada di Portamurella
+  strada di Sotto la Chiesa:
+    - strada d'avanti la Chiesa
 
 # Cognomi delle famiglie del paese. Stessa forma: chiave corretta,
 # elenco delle letture errate da ricondurvi.
@@ -46,7 +81,67 @@ toponimi:
 # da un comune vicino porta un cognome che a Torrebruna e' raro ed e'
 # giusto che resti raro: e' il segnale della mobilita' matrimoniale fra
 # paesi, ed e' fra i piu' interessanti che questi registri contengano.
-cognomi: {}
+cognomi:
+  # Decisioni prese sulle proposte della fase 5 dopo il giro 1809-1810
+  # (data/dataset/glossario-proposto.yaml). La chiave e' la forma buona.
+  Cicchillitti:
+    - Cicchillotto
+    - Cicchilotti
+    - Cicchitelli
+    - Cicchitieri
+    - Cicchitti
+  Pizzi:
+    - Lizzi
+  Bracchi:
+    - Branchi
+  Lella:
+    - Della
+    - Leppa
+  Troilo:
+    - Trojlo
+  Rossi:
+    - Rosso
+    - Bossi
+    - Basso
+  # 'Torzo', 'Bozzo' e 'Toro' erano nelle proposte anche come voci a se':
+  # ricondotti qui, altrimenti la correzione si ferma a meta' strada
+  # (una sola passata: 'Toro' sarebbe diventato 'Torzo' e li' restava).
+  Torzi:
+    - Torzo
+    - Lozzi
+    - Bozzi
+    - Bozzo
+    - Tozzo
+    - Iozzo
+    - Toro
+    - Jorzo
+  Chielli:
+    - Chiello
+    - Chiuli
+  Conca:
+    - Cinca
+  Pannunzio:
+    - Lannunzio
+  Femminilli:
+    - Semmonelli
+    - Semenzilli
+    - Terminielli
+  Pelliccia:
+    - Pelliciola
+  Tilli:
+    - Lilli
+  Pepe:
+    - Pope
+  # Contro la statistica, che vede 'Letta' 22 volte e 'Petta' una:
+  # il cognome del paese e' Petta, confermato da chi lo conosce.
+  Petta:
+    - Letta
+  Manes:
+    - Mares
+  Desiderio:
+    - Pispirio
+  Cupajolo:
+    - Capsajolo
 
 # Forme che il modello legge in modo dubbio ma che sono corrette cosi'.
 # Confermare una lettura rara vale quanto correggerla: metterla qui la

@@ -28,6 +28,14 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from history_maker.backend import (  # noqa: F401  (fanno parte dell'API storica di questo modulo)
+    BackendNonDisponibile,
+    LimiteUsoRaggiunto,
+    Richiesta,
+    Risposta,
+    estrai_json,
+)
+
 logger = logging.getLogger(__name__)
 
 # Frasi con cui la CLI segnala che la quota dell'abbonamento e' esaurita.
@@ -51,11 +59,7 @@ SEGNALI_LIMITE = (
 ORARIO_DI_RIPRESA = re.compile(r"resets\s+(?:at\s+)?\d", re.IGNORECASE)
 
 
-class LimiteUsoRaggiunto(RuntimeError):
-    """La quota dell'abbonamento e' esaurita: si riprende piu' tardi."""
-
-
-class ClaudeCodeNonTrovato(RuntimeError):
+class ClaudeCodeNonTrovato(BackendNonDisponibile):
     """L'eseguibile ``claude`` non e' nel PATH."""
 
 
@@ -241,60 +245,45 @@ def _sembra_limite(testo: str) -> bool:
     return bool(ORARIO_DI_RIPRESA.search(testo))
 
 
-# Il modello incornicia quasi sempre il JSON in un blocco markdown, anche
-# quando gli si chiede di non farlo.
-_BLOCCO = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+# --- il backend ------------------------------------------------------------
 
 
-def estrai_json(testo: str):
-    """Ricava la struttura JSON dalla risposta testuale.
+class BackendClaudeCode:
+    """Trascrive invocando ``claude -p`` con l'abbonamento.
 
-    Tollera il blocco markdown e l'eventuale frase di accompagnamento,
-    cercando il primo array o oggetto bilanciato.
+    Resta la strada senza chiave e senza spesa, ed e' quella con cui il
+    progetto e' nato. Il suo limite non e' la qualita' ma il ritmo: le
+    ~50.000 token di impalcatura per invocazione, sommate alla quota a
+    finestre dell'abbonamento, tengono la trascrizione di un secolo su una
+    scala di mesi.
     """
-    if not testo or not testo.strip():
-        raise ValueError("risposta vuota")
 
-    blocco = _BLOCCO.search(testo)
-    candidato = blocco.group(1) if blocco else testo.strip()
+    nome = "claude-code"
+    modo_immagini = "disco"
 
-    try:
-        return json.loads(candidato)
-    except json.JSONDecodeError:
-        pass
+    def __init__(self, config):
+        self.config = config
 
-    ritagliato = _primo_valore_bilanciato(candidato)
-    if ritagliato is None:
-        raise ValueError(f"nessun JSON riconoscibile in: {testo[:200]}")
-    return json.loads(ritagliato)
+    def verifica(self) -> None:
+        verifica_installazione()
 
+    def riferimento_immagine(self, percorso: Path, indice: int) -> str:
+        """Il percorso su disco: e' con ``Read`` che la CLI apre le immagini."""
+        return str(percorso)
 
-def _primo_valore_bilanciato(testo: str) -> str | None:
-    """Primo array o oggetto JSON completo contenuto nel testo."""
-    aperture = {"[": "]", "{": "}"}
-    for inizio, carattere in enumerate(testo):
-        if carattere not in aperture:
-            continue
-        chiusura = aperture[carattere]
-        profondita = 0
-        in_stringa = False
-        preceduto_da_backslash = False
-        for fine in range(inizio, len(testo)):
-            corrente = testo[fine]
-            if in_stringa:
-                if preceduto_da_backslash:
-                    preceduto_da_backslash = False
-                elif corrente == "\\":
-                    preceduto_da_backslash = True
-                elif corrente == '"':
-                    in_stringa = False
-                continue
-            if corrente == '"':
-                in_stringa = True
-            elif corrente == carattere:
-                profondita += 1
-            elif corrente == chiusura:
-                profondita -= 1
-                if profondita == 0:
-                    return testo[inizio : fine + 1]
-    return None
+    def esegui(self, richiesta: Richiesta) -> Risposta:
+        cartelle = sorted({p.parent for p in richiesta.immagini} | {self.config.ridotte})
+        esito = esegui(
+            prompt=richiesta.istruzione,
+            sistema=richiesta.sistema,
+            cartelle=cartelle,
+            modello=richiesta.modello or self.config.trascrizione.modello,
+            timeout=richiesta.timeout_s,
+        )
+        return Risposta(
+            ok=esito.ok,
+            testo=esito.testo,
+            token_contesto=esito.token_contesto,
+            token_output=esito.token_output,
+            errore=esito.errore,
+        )

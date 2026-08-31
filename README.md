@@ -11,7 +11,7 @@ La pipeline fa quattro cose, in quattro comandi separati:
 |---|---|---|---|
 | 1 | **discover** | Selenium | `data/catalogo.json` — quali registri esistono |
 | 2 | **download** | requests + IIIF | `data/immagini/` — le pagine digitalizzate |
-| 3 | **transcribe** | Claude Code | `data/trascrizioni/` — gli atti in JSON |
+| 3 | **transcribe** | Gemini (piano gratuito) | `data/trascrizioni/` — gli atti in JSON |
 | 4 | **dataset** | SQLite | `data/dataset/` — database, CSV e sintesi |
 | 5 | **revisione** | statistica | `revisione.md` — le letture da ricontrollare |
 
@@ -61,20 +61,68 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Per la fase di trascrizione serve **Claude Code**, che usa il tuo
-abbonamento Claude Pro — nessun credito API, nessun costo aggiuntivo:
+Per la fase di trascrizione serve una **chiave di Google AI Studio**, che
+è gratuita e si prende in un minuto su
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey). Non va
+messa in nessun file del progetto:
+
+```bash
+export GEMINI_API_KEY="la-tua-chiave"          # bash
+$env:GEMINI_API_KEY = "la-tua-chiave"          # PowerShell
+```
+
+**Non c'è niente da pagare**, e il secolo intero ci sta dentro. Il conteggio
+di quel che hai usato oggi sta in `data/.quota-gemini.json` e sopravvive
+al riavvio, così rilanciare il comando tre volte nello stesso pomeriggio
+non si prende una raffica di 429.
+
+I limiti del piano gratuito sono **tre**, e vanno capiti tutti e tre
+perché tirano in direzioni diverse:
+
+| | cos'è | cosa lo tocca |
+|---|---|---|
+| **RPD** | richieste al giorno | quante pagine fai in una giornata |
+| **RPM** | richieste al minuto | quanto vai veloce |
+| **TPM** | **token al minuto** | quante pagine puoi mettere in una richiesta |
+
+Il primo è quello che senti — finita la quota, si riprende domani. Il
+terzo è quello che sorprende: raggruppare più pagine per chiamata fa più
+pagine al giorno, ma con le facciate divise ogni pagina sono due immagini
+da ~1.550 token, e il TPM arriva prima della quota giornaliera. È il
+motivo per cui `pagine_per_chiamata` è 6 e non 20.
+
+**I valori esatti non sono più pubblicati da Google**: la documentazione
+rimanda alla tua pagina personale, e i limiti dipendono dal modello e dal
+progetto. Guardali su
+[aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit)
+e riportali in `config/torrebruna.yaml` sotto `richieste_al_minuto` e
+`richieste_al_giorno` — se il tuo RPD è più alto del default, il lavoro
+si accorcia in proporzione.
+
+### L'altra strada: Claude Code sull'abbonamento
+
+Il progetto è nato così e la strada resta aperta: `backend: claude-code`
+in `config/torrebruna.yaml`. Non serve nessuna chiave — basta installare
+Claude Code e autenticarsi una volta — ma serve sapere perché non è più
+il default.
 
 ```bash
 npm install -g @anthropic-ai/claude-code
 claude          # una volta sola, per autenticarti con l'abbonamento
 ```
 
-**Nessuna spesa oltre l'abbonamento.** Il progetto non chiama mai l'API a
-consumo: non ha la dipendenza `anthropic` e non legge nessuna chiave. Se
-sulla tua macchina è impostata `ANTHROPIC_API_KEY` o `ANTHROPIC_AUTH_TOKEN`
-— l'unico modo in cui Claude Code fatturerebbe a consumo invece di usare
-l'abbonamento — viene tolta dall'ambiente del processo, con un avviso nel
-log. Il vincolo è la quota, mai il portafoglio.
+Il problema non è la qualità della lettura, che è ottima: è il **ritmo**.
+Ogni invocazione della CLI porta con sé circa 50.000 token di prompt di
+sistema e definizioni di strumenti, contro i ~2.100 di un'immagine. A
+dieci pagine per chiamata sono 5.000 token a pagina di pura impalcatura —
+**i sette decimi della quota se ne vanno prima di guardare una pagina** —
+e la quota dell'abbonamento si rinnova a finestre di ore. Misurato sul
+campo: circa un anno di atti per finestra, cioè mesi per un secolo.
+
+Anche in quel caso nessuna spesa a consumo: se sulla tua macchina è
+impostata `ANTHROPIC_API_KEY` o `ANTHROPIC_AUTH_TOKEN` — l'unico modo in
+cui Claude Code fatturerebbe l'API invece di usare l'abbonamento — viene
+tolta dall'ambiente del processo, con un avviso nel log.
 
 ### Se il browser non parte
 
@@ -109,8 +157,8 @@ python -m history_maker catalog --scartati   # e perché ha escluso il resto
 python -m history_maker download --elenca    # prima vedi cosa scaricherebbe
 python -m history_maker download
 
-# 3. trascrivi con Claude Code (usa l'abbonamento)
-python -m history_maker transcribe --stima             # invocazioni, contesto, tempo
+# 3. trascrivi (piano gratuito di Gemini)
+python -m history_maker transcribe --stima             # chiamate, giorni, quota di oggi
 python -m history_maker transcribe --limite 20         # prova su 20 pagine
 python -m history_maker transcribe --attendi           # tutto, aspettando il rinnovo quota
 
@@ -119,6 +167,9 @@ python -m history_maker dataset
 
 # 5. scopri dove le trascrizioni probabilmente sbagliano (non consuma quota)
 python -m history_maker revisione
+
+# in qualunque momento: due letture delle stesse pagine, a confronto
+python -m history_maker confronta data/trascrizioni data/altra-lettura
 ```
 
 Per il giro completo su un anno solo, comando per comando, vedi
@@ -132,36 +183,81 @@ momento per correggere il prompt in `src/history_maker/prompt.py`, che
 conosce il formulario dei tre regimi ma non conosce il tuo paese. Solo
 dopo lancia il resto.
 
+### La risoluzione è il tetto della qualità
+
+**Questa è la cosa più importante della fase 3, e non ha niente a che
+vedere con la scelta del modello.**
+
+Una scansione di questi registri è una doppia pagina orizzontale, circa
+3700×2300 pixel. Ridotta intera a 1568 px di lato lungo — la misura oltre
+la quale nessun modello guadagna dettaglio utile — ogni facciata arriva
+al modello con **784 pixel di larghezza**. È la causa prima delle letture
+sbagliate: `Femminilli` letto `Tommolilli`, `Rua di Nuorro` letta `Via di
+Ricovro`, sono tutte perfettamente leggibili sull'originale.
+
+Ritagliare la cornice nera non basta: la scansione resta orizzontale e il
+lato lungo continua a decidere il fattore di riduzione. E ritagliare *una
+sola* metà non si può, perché su questi registri una doppia pagina porta
+spesso un atto per lato — `ritaglio.lato_scritto` restituisce `None`
+apposta, perché buttare via un atto è un errore che nessuno vede.
+
+`dividi_facciate: true` risolve entrambe le cose insieme. Ogni metà
+diventa un'immagine verticale, il suo lato lungo è l'altezza, e alla
+stessa riduzione la larghezza utile passa da 784 a **~1150 pixel**. Le
+due metà si sovrappongono di un dito, così una parola a cavallo della
+piega resta intera almeno da un lato, e al modello viene detto che sono
+una pagina sola: un solo oggetto JSON per scansione, nessun atto perso.
+
 ### La quota, non il denaro
 
-Con l'abbonamento non c'è nulla da pagare a consumo, ma la quota si
-esaurisce e si rinnova a finestre. Un secolo di registri sono migliaia di
-pagine: il lavoro **si fermerà più volte**, ed è normale.
+Sul piano gratuito non c'è nulla da pagare, ma le richieste al giorno
+sono contate. Un secolo di registri sono migliaia di pagine: il lavoro
+**si fermerà più volte**, ed è normale.
 
 - `--attendi` lascia che si fermi e riprenda da solo.
 - Senza `--attendi` si ferma pulito e ti dice di rilanciare più tardi.
 - In entrambi i casi **ogni pagina finita è salvata subito**: rilanciare
   non rifà mai il lavoro già fatto.
-
-Due leve se la quota finisce troppo in fretta, entrambe in
-`config/torrebruna.yaml`:
-
-- `modello: claude-sonnet-5` consuma molta meno quota di Opus e su una
-  scrittura leggibile se la cava bene.
-- `pagine_per_chiamata` più alto ammortizza meglio il sovraccarico (vedi
-  sotto), a costo di risposte più lunghe.
+- Un limite di *ritmo* — troppe richieste in un minuto — non ferma niente:
+  dura qualche decina di secondi, e il lavoro aspetta e prosegue anche
+  senza `--attendi`.
 
 ### Perché le pagine vanno a gruppi
 
-Ogni invocazione di Claude Code porta con sé il suo prompt di sistema e le
-definizioni degli strumenti: **~50.000 token di impalcatura**, contro i
-~2.500 di una singola immagine. Il sovraccarico è per *chiamata*, non per
-*immagine*, quindi trascrivere una pagina alla volta sprecherebbe il 95%
-della quota. A quattro pagine per chiamata il costo scende a ~20.000
-token a pagina — misurato, non stimato.
+Vale per entrambi i motori, ma per ragioni opposte, ed è la cosa da
+capire prima di toccare `pagine_per_chiamata`.
 
-È il prezzo di questa strada: l'API diretta costerebbe ~2.500 token a
-pagina, ma richiede credito prepagato che l'abbonamento non include.
+Con **Claude Code** il sovraccarico è per invocazione: ogni chiamata porta
+il prompt di sistema e le definizioni degli strumenti, **~50.000 token di
+impalcatura** contro i ~2.100 di un'immagine. Raggruppare è l'unico modo
+di non sprecare la quota — a dieci pagine per chiamata il costo scende da
+50.000 a ~7.000 token a pagina, e i sette decimi restano comunque
+impalcatura.
+
+Con **Gemini** quel sovraccarico non esiste, ma il piano gratuito conta
+le *richieste al giorno*. Raggruppare è l'unico modo di trascrivere
+più pagine al giorno: 250 richieste da 6 pagine sono 1.500 pagine, 250 da
+10 sarebbero 2.500. Il tetto pratico è il limite di token al minuto —
+con le facciate divise sono due immagini da ~1.550 token per pagina — e
+sei per chiamata ci stanno comode.
+
+### Come si verifica che un motore legga bene
+
+Non credendo a chi lo dice. `confronta` mette due cartelle di
+trascrizioni delle **stesse pagine** una accanto all'altra e conta dove
+divergono, distinguendo lo scambio plausibile per una mano ottocentesca
+(la `ſ` lunga letta `f`) dalla lettura proprio diversa:
+
+```bash
+python -m history_maker transcribe --anno 1809 --rifai   # con il motore nuovo
+python -m history_maker confronta data/trascrizioni-vecchie data/trascrizioni
+```
+
+Non dice chi ha ragione — per quello bisogna guardare la carta — ma dice
+*quanto* e *dove* le due letture si discostano, e chiude con l'elenco dei
+punti da verificare sull'originale. Serve per cambiare motore, ma anche
+per misurare cosa cambia alzando la risoluzione o aggiungendo una voce al
+glossario.
 
 ---
 
@@ -190,13 +286,14 @@ Un JSON per pagina, conforme allo schema in `src/history_maker/schema.py`:
 }
 ```
 
-Claude Code non offre l'equivalente di `output_config.format` dell'API,
-quindi la conformità non è garantita: lo schema è chiesto a parole nel
-prompt e ogni risposta passa dal validatore in
-`src/history_maker/schema.py`, che aggiunge le chiavi mancanti e scarta
-quelle inattese. Se un gruppo di pagine restituisce una risposta
-inutilizzabile, viene ritentato **una pagina per volta**, così una pagina
-illeggibile non trascina con sé le altre tre.
+Con Gemini lo schema viaggia in `responseSchema` e la risposta è JSON
+conforme per costruzione; con Claude Code, che non offre l'equivalente,
+va chiesto a parole. In entrambi i casi ogni risposta passa comunque dal
+validatore in `src/history_maker/schema.py`, che aggiunge le chiavi
+mancanti e scarta quelle inattese: **un vincolo di forma non è un vincolo
+di senso**, e costa zero tenerlo. Se un gruppo di pagine restituisce una
+risposta inutilizzabile, viene ritentato **una pagina per volta**, così
+una pagina illeggibile non trascina con sé le altre.
 
 **Ogni campo può essere `null`.** Il prompt vieta esplicitamente di
 inventare: un dato illeggibile resta vuoto e finisce in
@@ -274,8 +371,18 @@ ti dice dove guardare; non sostituisce il tuo occhio sull'originale.
 ## Configurazione
 
 Tutto in `config/torrebruna.yaml`: intervallo di anni, tipologie,
-esclusioni, ritmo delle richieste, modello e dimensioni delle immagini.
-Per un altro comune basta copiare il file e passarlo con `-c`.
+esclusioni, ritmo delle richieste, backend e modello, e come le immagini
+arrivano al modello. Per un altro comune basta copiare il file e passarlo
+con `-c`.
+
+Le opzioni della fase 3 si possono anche sovrascrivere per una singola
+esecuzione, che è il modo di confrontare due strade senza toccare il
+YAML fra una prova e l'altra:
+
+```bash
+python -m history_maker transcribe --backend claude-code --modello claude-opus-5
+python -m history_maker transcribe --senza-testo-integrale
+```
 
 ## Cortesia verso il portale
 
@@ -292,11 +399,23 @@ resta la fonte da consultare per l'uso che ne farai.
 pip install -e ".[dev]" && pytest
 ```
 
-I 109 test girano offline e non consumano quota: il formato del portale
-è collaudato su manifest campione, la fase di download contro un finto
-server IIIF locale che riproduce anche il 403 sulla sintassi
-`/full/full/0/`, e la fase di trascrizione contro un finto eseguibile
-`claude` programmabile — raggruppamento, riallineamento delle risposte,
-ripiego a pagina singola ed esaurimento della quota compresi. La fase 5 è
-collaudata sul caso che l'ha originata: un cognome raro vicino a uno
-frequente viene segnalato, un forestiero vero no.
+I test girano offline, non toccano la rete e non consumano quota. Il
+formato del portale è collaudato su manifest campione; la fase di
+download contro un finto server IIIF locale che riproduce anche il 403
+sulla sintassi `/full/full/0/`; la fase di trascrizione due volte, contro
+un finto eseguibile `claude` programmabile e contro una finta sessione
+HTTP per Gemini — raggruppamento, riallineamento delle risposte, ripiego
+a pagina singola ed esaurimento della quota compresi.
+
+Tre cose hanno test propri perché sbagliano in silenzio:
+
+- la traduzione dello schema nel dialetto di `responseSchema`, che se
+  sbaglia fa fallire *ogni* chiamata con un 400;
+- il conteggio delle richieste giornaliere, che deve sopravvivere al
+  riavvio del processo;
+- la divisione delle facciate, che se il modello la fraintende produce
+  due oggetti dove ne serviva uno e manda fuori sincrono tutta la
+  risposta.
+
+La fase 5 è collaudata sul caso che l'ha originata: un cognome raro
+vicino a uno frequente viene segnalato, un forestiero vero no.

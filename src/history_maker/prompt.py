@@ -8,7 +8,7 @@ equivalente di ``output_config.format`` dell'API e la forma della
 risposta va chiesta a parole.
 """
 
-SISTEMA = """Sei un paleografo specializzato in registri di stato civile italiani
+_MODELLO_SISTEMA = """Sei un paleografo specializzato in registri di stato civile italiani
 dell'Ottocento e trascrivi atti del comune di Torrebruna, in provincia di
 Chieti (Abruzzo), per il periodo 1809-1900.
 
@@ -33,8 +33,9 @@ COME LEGGERE
 - "fu Giuseppe" indica un padre gia' defunto; "di Giuseppe" un padre
   vivente. E' un'informazione storica di valore: riportala in
   stato_vitale.
-- Le eta' sono spesso approssimate ("di anni trenta circa"): trascrivi
-  quello che c'e' scritto, non arrotondare.
+- Le eta' vanno riportate NELLA FORMA IN CUI STANNO SULLA PAGINA:
+  "trentasei", "venticinque", "trenta circa" — non in cifre, e senza
+  arrotondare. "di anni trentasei" da' eta: "trentasei", non "36".
 - I mestieri ricorrenti in area frentana sono contadino, bracciale,
   colono, massaro, pastore, filatrice, tessitrice, calzolaio, fabbro,
   possidente, sacerdote. Se la parola e' dubbia, segnalalo.
@@ -53,10 +54,7 @@ REGOLE DI TRASCRIZIONE
    ciascuno, nell'ordine in cui compaiono.
 4. Se la pagina non contiene atti (copertina, indice, pagina bianca,
    frontespizio, allegato), indicalo in tipo_pagina e lascia atti vuoto.
-5. In testo_integrale riporta la trascrizione diplomatica dell'atto, con
-   la punteggiatura e le maiuscole originali. Usa [...] per i passaggi
-   illeggibili e [?] dopo una parola letta con incertezza.
-6. Imposta affidabilita a "alta" quando la scrittura e' chiara e hai
+{regola_testo_integrale}6. Imposta affidabilita a "alta" quando la scrittura e' chiara e hai
    letto tutto, "media" quando qualche parola e' dubbia, "bassa" quando
    la pagina e' danneggiata, sbiadita o in gran parte illeggibile.
 7. Registra in persone tutte le persone nominate, con il loro ruolo:
@@ -66,7 +64,7 @@ REGOLE DI TRASCRIZIONE
 Rispondi esclusivamente con JSON. Nessun commento, nessuna spiegazione,
 nessun testo prima o dopo."""
 
-SCHEMA_A_PAROLE = """Per OGNI pagina restituisci un oggetto con questa forma esatta:
+_MODELLO_SCHEMA = """Per OGNI pagina restituisci un oggetto con questa forma esatta:
 
 {
   "file": "<il nome del file, esattamente come te l'ho indicato>",
@@ -74,6 +72,7 @@ SCHEMA_A_PAROLE = """Per OGNI pagina restituisci un oggetto con questa forma esa
   "anno_indicato": <l'anno scritto sulla pagina, o null>,
   "comune_indicato": <il comune scritto sulla pagina, o null>,
   "osservazioni": <stato di conservazione, annotazioni a margine, timbri, o null>,
+  "lato_pagina": "sinistra" | "destra" | "entrambe" | null,
   "voci_indice": [
     {"cognome": ..., "nome": ..., "numero_atto": ...}
   ],
@@ -94,12 +93,16 @@ SCHEMA_A_PAROLE = """Per OGNI pagina restituisci un oggetto con questa forma esa
           "note": <o null>
         }
       ],
-      "testo_integrale": <trascrizione diplomatica dell'atto>,
-      "parti_illeggibili": [<descrizione breve di ogni punto incerto>],
+{testo_integrale}      "parti_illeggibili": [<descrizione breve di ogni punto incerto>],
       "affidabilita": "alta" | "media" | "bassa"
     }
   ]
 }
+
+"lato_pagina" dice su quale meta' della scansione sta il testo COMPILATO:
+quasi tutte queste immagini sono doppie pagine, e spesso una meta' porta
+l'atto scritto a mano e l'altra il modulo ancora vuoto. Serve a ritagliare
+il punto giusto se in seguito una lettura va verificata sull'originale.
 
 Una pagina senza atti (copertina, indice, bianca) ha "atti": [] — non e'
 un errore, e' un risultato corretto.
@@ -111,11 +114,52 @@ atti, e serve a scoprire gli errori di lettura. Per tutte le altre pagine
 "voci_indice" e' []."""
 
 
+# La regola 5 e la riga corrispondente dello schema esistono solo se la
+# trascrizione diplomatica e' richiesta. Sono un terzo dei token prodotti,
+# e chi punta all'albero genealogico non li usa: toglierli dal prompt —
+# invece di chiederli e buttarli — e' cio' che trasforma il risparmio in
+# pagine trascritte.
+_REGOLA_TESTO_INTEGRALE = """5. In testo_integrale riporta la trascrizione diplomatica dell'atto, con
+   la punteggiatura e le maiuscole originali. Usa [...] per i passaggi
+   illeggibili e [?] dopo una parola letta con incertezza.
+"""
+
+_CAMPO_TESTO_INTEGRALE = """      "testo_integrale": <trascrizione diplomatica dell'atto>,
+"""
+
+
+def sistema(testo_integrale: bool = True) -> str:
+    """Il prompt di sistema del paleografo."""
+    return _MODELLO_SISTEMA.replace(
+        "{regola_testo_integrale}", _REGOLA_TESTO_INTEGRALE if testo_integrale else ""
+    )
+
+
+def descrivi_schema(testo_integrale: bool = True) -> str:
+    """Lo schema chiesto a parole, per i backend che non sanno imporlo."""
+    return _MODELLO_SCHEMA.replace(
+        "{testo_integrale}", _CAMPO_TESTO_INTEGRALE if testo_integrale else ""
+    )
+
+
+# Le forme complete, per chi le vuole senza costruirle.
+SISTEMA = sistema()
+SCHEMA_A_PAROLE = descrivi_schema()
+
+# Come il modello arriva alle immagini: le apre dal disco, o le ha gia'
+# davanti. Cambia una frase del prompt, e sbagliarla costa una chiamata —
+# a Gemini non esiste nessuno strumento Read da usare.
+COME_LEGGERE = {
+    "disco": "Leggile tutte con lo strumento Read.",
+    "allegate": "Le trovi allegate qui sotto, ciascuna preceduta dalla sua etichetta.",
+}
+
+
 ISTRUZIONE_GRUPPO = """Trascrivi queste {quante} pagine di registri di stato civile
-del comune di Torrebruna (Chieti). Leggile tutte con lo strumento Read.
+del comune di Torrebruna (Chieti). {come_leggere}
 
 {elenco}
-{forme_note}
+{nota_facciate}{forme_note}
 {schema}
 
 Rispondi con un ARRAY JSON di {quante} oggetti, uno per pagina, nello
@@ -123,13 +167,47 @@ stesso ordine in cui le ho elencate. Nessun testo fuori dal JSON.
 Ricorda: nessun dato inventato, i campi non leggibili restano null."""
 
 
-def descrivi_pagina(percorso: str, contesto: str | None, anno, tipologia: str | None) -> str:
-    """Una riga dell'elenco delle pagine da trascrivere."""
-    return (
-        f"- {percorso}\n"
+def descrivi_pagina(
+    riferimenti: str | list[str],
+    contesto: str | None,
+    anno,
+    tipologia: str | None,
+    nome: str | None = None,
+) -> str:
+    """Una voce dell'elenco delle pagine da trascrivere.
+
+    ``riferimenti`` sono le immagini che ritraggono questa scansione: una
+    sola, oppure le due meta' in cui e' stata divisa. In quel secondo caso
+    il nome del file sta in testa e le due immagini sotto, perche' cio'
+    che deve restare chiarissimo e' che sono **una pagina sola**: due
+    oggetti al posto di uno mandano fuori sincrono tutta la risposta.
+    """
+    if isinstance(riferimenti, str):
+        riferimenti = [riferimenti]
+    coda = (
         f"    contesto: {contesto or 'n.d.'} | anno: {anno or 'n.d.'} | "
         f"tipologia: {tipologia or 'n.d.'}"
     )
+    if len(riferimenti) == 1:
+        return f"- {riferimenti[0]}\n{coda}"
+    return (
+        f"- {nome or riferimenti[0]} — UNA SOLA pagina, mostrata in "
+        f"{len(riferimenti)} immagini: {', '.join(riferimenti)}\n{coda}"
+    )
+
+
+# Va detto una volta sola ma va detto: il modello che riceve venti
+# immagini per dieci pagine, senza questa frase, restituisce venti
+# oggetti, e da quel momento ogni trascrizione finisce nel file sbagliato.
+NOTA_FACCIATE = """
+LE PAGINE SONO DIVISE IN DUE
+Ogni scansione ti arriva come DUE immagini: la meta' sinistra e la meta'
+destra dello stesso foglio aperto, con un dito di sovrapposizione al
+centro. Sono una pagina sola. Restituisci UN SOLO oggetto per scansione,
+che raccolga gli atti di entrambe le meta' nell'ordine in cui si leggono,
+e metti in "file" il nome della scansione, non quello della meta'. Un
+atto che comincia su una meta' e finisce sull'altra e' un atto solo.
+"""
 
 
 def descrivi_forme_note(toponimi: list[str], cognomi: list[str]) -> str:

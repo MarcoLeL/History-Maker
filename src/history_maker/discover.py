@@ -28,7 +28,7 @@ from selenium.webdriver.common.by import By
 
 from history_maker import iiif
 from history_maker.browser import BASE, apri_browser, vai
-from history_maker.catalogo import Catalogo, Registro, pertinente
+from history_maker.catalogo import Catalogo, Registro, pertinente, recuperati
 from history_maker.config import Config
 from history_maker.errors import ManifestError
 
@@ -38,11 +38,48 @@ URL_RICERCA = f"{BASE}/search-registry/"
 ARK_PATTERN = re.compile(r"https?://[^\s\"']*?/ark:/12657/[A-Za-z0-9_.:/-]+")
 
 
-def url_ricerca(termine: str, anno: int | None = None) -> str:
+# Risultati per pagina. La ricerca ne mostra DIECI per difetto e impagina
+# il resto, e i risultati oltre il primo blocco non stanno nell'HTML: chi
+# legge solo la prima pagina non se ne accorge, perche' dieci risultati
+# sono un numero perfettamente credibile.
+#
+# E' costato caro. Su novanta anni interrogati, quarantasei si fermavano
+# esatti a dieci gallerie e **nessuno ne restituiva undici**: un tetto
+# tondo che, riletto, era la firma del guasto. Il selettore della pagina
+# arriva a 100, e il suo JavaScript rivela che e' un semplice parametro
+# di query — nessun clic da simulare.
+RISULTATI_PER_PAGINA = 100
+
+# Gli stessi parametri che usa il portale: 's_size' quante voci per
+# pagina, 's_page' quale pagina.
+PARAM_DIMENSIONE = "s_size"
+PARAM_PAGINA = "s_page"
+
+# Un tetto di sicurezza: con 100 risultati per pagina nessun comune
+# italiano ha tante unita' archivistiche in un anno solo, ma un ciclo che
+# clicca "avanti" all'infinito e' peggio di un risultato incompleto.
+MAX_PAGINE = 20
+
+
+def url_ricerca(termine: str, anno: int | None = None, pagina: int = 1) -> str:
     parametri = {"localita": termine}
     if anno is not None:
         parametri["anno"] = str(anno)
+    parametri[PARAM_DIMENSIONE] = str(RISULTATI_PER_PAGINA)
+    if pagina > 1:
+        parametri[PARAM_PAGINA] = str(pagina)
     return f"{URL_RICERCA}?{urlencode(parametri)}"
+
+
+# "Pagina 1 di 3": il portale dice quante pagine ci sono, e leggerlo e'
+# piu' affidabile che dedurlo dal numero di risultati.
+PAGINE_TOTALI = re.compile(r"Pagina\s+(\d+)\s+di\s+(\d+)", re.IGNORECASE)
+
+
+def pagine_di_risultati(html: str) -> int:
+    """Quante pagine di risultati dichiara la ricerca. Almeno una."""
+    trovato = PAGINE_TOTALI.search(html)
+    return max(1, int(trovato.group(2))) if trovato else 1
 
 
 def _link_ark(driver: webdriver.Chrome) -> set[str]:
@@ -112,10 +149,24 @@ def raccogli_ark(
 
     tutti: set[str] = set()
     for anno in interrogazioni:
-        url = url_ricerca(config.termine_ricerca, anno)
-        vai(driver, url)
-        _scorri_fino_in_fondo(driver, pausa)
-        trovati = _link_ark(driver)
+        trovati: set[str] = set()
+        pagina, totali = 1, 1
+        while pagina <= min(totali, MAX_PAGINE):
+            vai(driver, url_ricerca(config.termine_ricerca, anno, pagina))
+            _scorri_fino_in_fondo(driver, pausa)
+            trovati |= _link_ark(driver)
+            if pagina == 1:
+                totali = pagine_di_risultati(driver.page_source)
+                if totali > 1:
+                    logger.info("  l'anno %s ha %d pagine di risultati", anno, totali)
+            if debug_dir is not None:
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                suffisso = "" if pagina == 1 else f"-p{pagina}"
+                nome = f"ricerca-{anno or 'tutti'}{suffisso}.html"
+                (debug_dir / nome).write_text(driver.page_source, encoding="utf-8")
+            pagina += 1
+            time.sleep(pausa)
+
         nuovi = trovati - tutti
         tutti |= trovati
         logger.info(
@@ -124,11 +175,6 @@ def raccogli_ark(
             len(trovati),
             len(nuovi),
         )
-        if debug_dir is not None:
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            nome = f"ricerca-{anno or 'tutti'}.html"
-            (debug_dir / nome).write_text(driver.page_source, encoding="utf-8")
-        time.sleep(pausa)
     return tutti
 
 
@@ -249,6 +295,18 @@ def riepilogo(catalogo: Catalogo, config: Config) -> str:
         immagini += registro.n_immagini or 0
     if per_tipologia:
         righe.append("  per tipologia: " + ", ".join(f"{k}={v}" for k, v in sorted(per_tipologia.items())))
+
+    # I registri rientrati perche' erano l'ultima fonte del loro anno
+    # vanno detti: sono un'eccezione a una regola che l'utente ha scritto,
+    # e un'eccezione silenziosa e' peggio di nessuna eccezione.
+    rientrati = recuperati(catalogo, config)
+    if rientrati:
+        righe.append(
+            f"  RIENTRATI perche' unica fonte del loro anno: {len(rientrati)} "
+            f"({sum(r.n_immagini or 0 for r in rientrati)} pagine)"
+        )
+        for r in sorted(rientrati, key=lambda r: (r.anno or 0)):
+            righe.append(f"      {r.anno} {r.tipologia} — nessun altro registro di quel tipo")
     righe.append(f"  immagini da scaricare: {immagini}")
 
     motivi: dict[str, int] = {}

@@ -89,10 +89,80 @@ def apri_browser(headless: bool = False, timeout: int = 45) -> Iterator[webdrive
         driver.quit()
 
 
+# Oltre questa dimensione complessiva dei cookie, il portale risponde
+# "Bad Request — Size of a request header field exceeds server limit" e
+# non si riprende piu' da solo. Il limite dei server e' tipicamente 8 KB
+# per intestazione: si interviene prima, con margine.
+COOKIE_MAX_BYTE = 6_000
+
+# Come si presenta il guasto quando ci si arriva lo stesso: non e' un
+# errore di Selenium, e' una pagina servita col testo dentro, quindi
+# l'unico modo di accorgersene e' leggerla.
+SEGNALI_HEADER_TROPPO_GRANDE = (
+    "request header field exceeds",
+    "size of a request header",
+    "400 bad request",
+)
+
+
+def _peso_cookie(driver: webdriver.Chrome) -> int:
+    """Quanti byte occuperebbero i cookie nell'intestazione della richiesta."""
+    try:
+        return sum(
+            len(c.get("name", "")) + len(c.get("value", "")) + 3
+            for c in driver.get_cookies()
+        )
+    except WebDriverException:
+        return 0
+
+
+def sfoltisci_cookie(driver: webdriver.Chrome, soglia: int = COOKIE_MAX_BYTE) -> bool:
+    """Butta i cookie quando diventano troppi. Dice se l'ha fatto.
+
+    Il portale sta dietro un WAF di AWS che rilascia un token a ogni
+    passaggio, e in una scoperta di novant'anni sono novanta ricerche piu'
+    qualche centinaio di gallerie: i cookie si accumulano finche'
+    l'intestazione supera il limite del server, e da quel momento **ogni**
+    pagina risponde "Bad Request". Il guasto e' insidioso perche' non
+    assomiglia a un problema di cookie: sembra che il portale sia caduto.
+
+    Buttarli tutti costa una challenge del WAF in piu' — che la funzione
+    di attesa gestisce gia' — e vale molto meno di una scoperta da
+    ricominciare.
+    """
+    if _peso_cookie(driver) <= soglia:
+        return False
+    logger.info("Cookie troppo voluminosi: li azzero per non farmi rifiutare dal portale.")
+    try:
+        driver.delete_all_cookies()
+    except WebDriverException:
+        return False
+    return True
+
+
+def _header_troppo_grande(driver: webdriver.Chrome) -> bool:
+    try:
+        testo = driver.find_element(By.TAG_NAME, "body").text.lower()
+    except WebDriverException:
+        return False
+    return any(s in testo for s in SEGNALI_HEADER_TROPPO_GRANDE)
+
+
 def vai(driver: webdriver.Chrome, url: str, attesa: int = 30) -> None:
-    """Apre l'URL, accetta i cookie e aspetta che il WAF lasci passare."""
+    """Apre l'URL, accetta i cookie e aspetta che il WAF lasci passare.
+
+    Sfoltisce i cookie prima di partire, e se il portale rifiuta comunque
+    la richiesta per intestazione troppo grande, li azzera e riprova una
+    volta: senza, da quel punto in poi fallirebbe tutto il resto della
+    scoperta senza che nulla lo dica.
+    """
     logger.info("Apro %s", url)
+    sfoltisci_cookie(driver)
     driver.get(url)
+    if _header_troppo_grande(driver):
+        logger.warning("Il portale ha rifiutato la richiesta per cookie troppo grandi: riprovo.")
+        driver.delete_all_cookies()
+        driver.get(url)
     accetta_cookie(driver)
     attendi_superamento_waf(driver, attesa)
 

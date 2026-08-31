@@ -62,3 +62,31 @@ def manifest_guardiabruna() -> dict:
 @pytest.fixture
 def html_galleria() -> str:
     return (FIXTURES / "galleria.html").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def conn_di_prova():
+    """Un database in memoria con un atto di morte e uno di nascita."""
+    import sqlite3
+
+    from history_maker.dataset import SCHEMA_SQL
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA_SQL)
+    conn.execute(
+        "INSERT INTO atti (id, registro, immagine, numero_atto, tipo, anno, data_atto) "
+        "VALUES (1, 'r', '0001.jpg', '3', 'morte', 1809, '1809-05-02')"
+    )
+    conn.execute(
+        "INSERT INTO atti (id, registro, immagine, numero_atto, tipo, anno, data_atto) "
+        "VALUES (2, 'r', '0002.jpg', '4', 'nascita', 1809, '1809-06-11')"
+    )
+    conn.execute(
+        "INSERT INTO persone (atto, ruolo, nome, cognome, cognome_origine, eta, note) "
+        "VALUES (1, 'defunto', 'Noè', 'Pelliccia', 'atto', 'di maggior età', 'prova')"
+    )
+    conn.execute(
+        "INSERT INTO persone (atto, ruolo, nome, cognome, cognome_origine) "
+        "VALUES (2, 'neonato', 'Maria', 'Colella', 'padre')"
+    )
+    return conn

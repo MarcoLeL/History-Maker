@@ -166,13 +166,36 @@ def con_dimensione(url: str, lato_max: int = 0) -> str:
     return url.replace(_FULL_SIZE_TEMPLATE, dimensione)
 
 
+def _anni_nel_titolo(titolo: str) -> list[int]:
+    return [int(m.group(1)) for m in re.finditer(r"\b(1[7-9]\d{2}|20\d{2})\b", titolo)]
+
+
 def estrai_anno(titolo: str) -> int | None:
-    """Primo anno a quattro cifre plausibile contenuto nel titolo.
+    """Anno di apertura del registro, letto dal titolo.
 
     Il campo "Titolo" e' di solito il solo anno ("1866") ma capita di
     trovare intervalli ("1866-1870") o diciture piu' lunghe; in quei casi
     fa fede il primo anno, che e' quello di apertura del registro.
     """
-    for match in re.finditer(r"\b(1[7-9]\d{2}|20\d{2})\b", titolo):
-        return int(match.group(1))
-    return None
+    anni = _anni_nel_titolo(titolo)
+    return anni[0] if anni else None
+
+
+def estrai_anno_fine(titolo: str) -> int | None:
+    """Anno di chiusura, quando il titolo e' un intervallo.
+
+    **Un registro puo' coprire piu' di un anno, e ignorarlo inventa lacune
+    che non esistono.** A Torrebruna dieci registri portano il titolo
+    ``1813-1814``: assegnando loro il solo 1813, il 1814 risulta un anno
+    senza atti — mentre i suoi atti stanno dentro quei registri, e il
+    conteggio delle pagine lo conferma (43 pagine di nati contro una
+    mediana di 28 l'anno, 32 di morti contro 17).
+
+    Restituisce ``None`` per i titoli a un anno solo: quello non e' un
+    intervallo e non va trattato come tale.
+    """
+    anni = _anni_nel_titolo(titolo)
+    if len(anni) < 2:
+        return None
+    fine = max(anni)
+    return fine if fine > anni[0] else None

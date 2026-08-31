@@ -23,7 +23,7 @@ from typing import Any, Callable
 from slugify import slugify
 
 from history_maker import http, iiif
-from history_maker.catalogo import Catalogo, Registro, pertinente
+from history_maker.catalogo import Catalogo, Registro, pertinente, selezione
 from history_maker.config import Config
 
 logger = logging.getLogger(__name__)
@@ -129,9 +129,11 @@ def esegui(
 ) -> Esito:
     """Scarica i registri pertinenti del catalogo, eventualmente di soli alcuni anni."""
     catalogo = Catalogo.carica(config.catalogo)
-    selezionati = [r for r in catalogo.registri if pertinente(r, config)[0]]
+    selezionati = selezione(catalogo, config)
+    # Intersezione, non confronto secco: un registro biennale come il
+    # '1813-1814' risponde a --anno 1814 anche se apre nel 1813.
     if dal is not None:
-        selezionati = [r for r in selezionati if (r.anno or 0) >= dal]
+        selezionati = [r for r in selezionati if (r.anno_fine or r.anno or 0) >= dal]
     if al is not None:
         selezionati = [r for r in selezionati if (r.anno or 0) <= al]
     selezionati.sort(key=lambda r: (r.anno or 0, r.tipologia or ""))
@@ -146,6 +148,17 @@ def esegui(
             print(f"  {registro.anno}  {tipologia:<16} {registro.n_immagini or '?':>5} img  {registro.slug}")
         return Esito()
 
+    # NOTA: questa fase non salva mai il catalogo, ed e' deliberato.
+    #
+    # Lo faceva, dopo ogni registro, per aggiornare un campo 'cartella'
+    # che nessuno legge e che coincide comunque con lo slug. In cambio
+    # teneva in memoria per mezz'ora una copia del catalogo e la
+    # riscriveva alla fine: una scoperta lanciata nel frattempo — che il
+    # catalogo lo possiede davvero — si e' vista cancellare 61 registri
+    # appena trovati, senza un errore, senza un avviso.
+    #
+    # Il catalogo ha un solo proprietario: 'discover'. Le altre fasi lo
+    # leggono e basta.
     totale = Esito()
     for indice, registro in enumerate(selezionati, 1):
         logger.info(
@@ -153,5 +166,4 @@ def esegui(
             indice, len(selezionati), registro.anno, registro.tipologia, registro.n_immagini or "?",
         )
         totale = totale + scarica_registro(registro, config, config.immagini, lato_max)
-        catalogo.salva(config.catalogo)
     return totale

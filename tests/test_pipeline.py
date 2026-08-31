@@ -7,7 +7,7 @@ from PIL import Image
 
 from history_maker import dataset, discover, download, transcribe
 from history_maker.catalogo import Catalogo, Registro
-from history_maker.config import Config
+from history_maker.config import Config, Trascrizione
 
 
 @pytest.fixture
@@ -25,6 +25,17 @@ def config(tmp_path) -> Config:
         ridotte=tmp_path / "ridotte",
         trascrizioni=tmp_path / "trascrizioni",
         dataset=tmp_path / "dataset",
+        # Il backend va fissato: il default del progetto e' Gemini, e
+        # questi test collaudano la strada di Claude Code.
+        trascrizione=Trascrizione(
+            backend="claude-code",
+            modello="claude-opus-5",
+            pagine_per_chiamata=4,
+            # Un'immagine per pagina: questi test collaudano la riduzione e
+            # il raggruppamento, non la divisione delle facciate, che ha i
+            # suoi in test_facciate.py.
+            dividi_facciate=False,
+        ),
     )
 
 
@@ -43,13 +54,18 @@ def registro() -> Registro:
 # --- fase 1: costruzione delle interrogazioni ------------------------------
 
 def test_url_di_ricerca_per_anno():
-    assert discover.url_ricerca("Torrebruna", 1866) == (
+    url = discover.url_ricerca("Torrebruna", 1866)
+    assert url.startswith(
         "https://antenati.cultura.gov.it/search-registry/?localita=Torrebruna&anno=1866"
     )
+    # E chiede il massimo di risultati per pagina: senza, il portale ne
+    # mostra dieci e impagina il resto in silenzio.
+    assert "s_size=100" in url
 
 
 def test_url_di_ricerca_senza_anno():
-    assert discover.url_ricerca("Torrebruna").endswith("?localita=Torrebruna")
+    url = discover.url_ricerca("Torrebruna")
+    assert "?localita=Torrebruna" in url and "anno=" not in url
 
 
 # --- fase 2: nomi dei file ------------------------------------------------
@@ -109,7 +125,7 @@ def test_prompt_elenca_tutte_le_pagine_e_lo_schema(config, registro, tmp_path):
         for i in (1, 2, 3)
     ]
     percorsi = [transcribe.prepara_immagine(p, config) for p in pagine]
-    prompt = transcribe.costruisci_prompt(pagine, percorsi)
+    prompt = transcribe.costruisci_prompt(pagine, [[p] for p in percorsi])
 
     for percorso in percorsi:
         assert str(percorso) in prompt
@@ -161,8 +177,8 @@ def test_stima_conta_le_invocazioni_non_gli_euro(config, registro, tmp_path):
         for i in range(1, 10)
     ]
     testo = transcribe.stima(config, pagine)
-    # 9 pagine a 4 per chiamata = 3 invocazioni.
-    assert "3 invocazioni" in testo
+    # 9 pagine a 4 per chiamata = 3 chiamate.
+    assert "3 chiamate" in testo
     assert "$" not in testo and "euro" not in testo.lower()
 
 
@@ -317,3 +333,30 @@ def test_trascrizione_ristretta_a_un_anno(config):
 
     solo_1809 = transcribe.pagine_da_trascrivere(config, dal=1809, al=1809)
     assert [p.registro.anno for p in solo_1809] == [1809]
+
+
+def test_le_pagine_da_trascrivere_sono_in_ordine_di_anno(config, tmp_path):
+    """L'ordine conta perche' il lavoro si interrompe a meta'.
+
+    La quota giornaliera finisce, ed e' normale. Quello che cambia e' cosa
+    resta in mano: il catalogo elenca i registri come il portale li ha
+    restituiti — prima tutti i Nati di cinquant'anni, poi tutti i Morti
+    degli stessi — e seguirlo lascia un mosaico con buchi in ogni
+    decennio. Per ricostruire parentele serve un blocco compatto.
+    """
+    from history_maker.catalogo import Catalogo, Registro
+
+    registri = [
+        Registro(ark_url=f"https://x/{a}{t}", contesto="Chieti/Torrebruna",
+                 titolo=str(a), tipologia=t, anno=a, archive_id=f"{a}{t}")
+        for t in ("Nati", "Morti")          # per tipologia, come fa il portale
+        for a in (1840, 1820, 1830)          # e in ordine sparso
+    ]
+    Catalogo(comune="Torrebruna", registri=registri).salva(config.catalogo)
+    for r in registri:
+        cartella = config.immagini / r.slug
+        cartella.mkdir(parents=True, exist_ok=True)
+        _immagine_finta(cartella / "0001.jpg", (400, 400))
+
+    anni = [p.registro.anno for p in transcribe.pagine_da_trascrivere(config)]
+    assert anni == sorted(anni), f"ordine non cronologico: {anni}"

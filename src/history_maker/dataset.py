@@ -21,10 +21,11 @@ import logging
 import re
 import sqlite3
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterator
 
-from history_maker import glossario, normalizza
+from history_maker import glossario, normalizza, paleografia
 from history_maker.config import Config
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,12 @@ CREATE TABLE IF NOT EXISTS atti (
     ora_evento      TEXT,
     luogo           TEXT,
     luogo_letto     TEXT,
+    luogo_incerto   INTEGER NOT NULL DEFAULT 0,
+    -- La contrada, separata dal comune. 'luogo' porta la formula intera
+    -- dell'atto ("Torrebruna, strada della Trascinella"); qui resta la
+    -- sola parte che dice DOVE dentro il paese, che e' quella su cui si
+    -- raggruppano le famiglie per vicinato.
+    via             TEXT,
     testo_integrale TEXT,
     affidabilita    TEXT,
     incertezze      TEXT
@@ -68,11 +75,27 @@ CREATE TABLE IF NOT EXISTS persone (
     nome_letto    TEXT,
     cognome       TEXT,
     cognome_letto TEXT,
+    -- Da dove viene il cognome: 'atto' se e' scritto sulla pagina,
+    -- 'padre' o 'madre' se e' stato ricavato. Sui neonati il cognome
+    -- quasi non compare mai — 39 su 45 nel solo 1809 — perche' il
+    -- formulario lo da' per implicito nel nome del padre. Ricavarlo
+    -- serve a rendere il bambino trovabile, ma un'inferenza non va
+    -- confusa con una lettura: chi studia le nascite illegittime deve
+    -- poter distinguere le due cose con una clausola WHERE.
+    cognome_origine TEXT,
     incerto       INTEGER NOT NULL DEFAULT 0,
     eta           TEXT,
     professione   TEXT,
     residenza     TEXT,
     residenza_letta TEXT,
+    -- La contrada ricavata dalla residenza della persona, quando l'atto
+    -- la nomina per lei invece che per l'evento.
+    via           TEXT,
+    -- L'incertezza sul luogo si segna a parte da quella sul nome: sono
+    -- due letture diverse, e una pagina puo' avere il cognome limpido e
+    -- la contrada illeggibile. Serve a scegliere cosa vale la pena
+    -- rileggere.
+    residenza_incerta INTEGER NOT NULL DEFAULT 0,
     stato_vitale  TEXT,
     note          TEXT
 );
@@ -102,15 +125,53 @@ CREATE VIRTUAL TABLE IF NOT EXISTS atti_fts USING fts5(
 """
 
 
-def leggi_trascrizioni(cartella: Path) -> Iterator[dict[str, Any]]:
-    """Scorre i JSON prodotti dalla fase di trascrizione."""
+def leggi_trascrizioni(
+    cartella: Path, ammessi: set[str] | None = None
+) -> Iterator[dict[str, Any]]:
+    """Scorre i JSON prodotti dalla fase di trascrizione.
+
+    ``ammessi`` sono gli slug dei registri che la configurazione tiene.
+    Serve perche' **le esclusioni non si applicano da sole a cio' che e'
+    gia' su disco**: escludere le pubblicazioni dal file di configurazione
+    ferma la fase 3, ma le pagine trascritte prima restano nella cartella,
+    e senza questo filtro rientrerebbero nel database dalla porta di
+    servizio — con gli stessi sposi e gli stessi genitori dell'atto di
+    matrimonio vero, contati due volte.
+
+    Un registro che il catalogo non conosce affatto viene tenuto: e' una
+    trascrizione che qualcuno ha messo li' a mano, e buttarla via in
+    silenzio sarebbe peggio che includerla.
+    """
+    saltati = 0
     for percorso in sorted(cartella.rglob("*.json")):
         if percorso.name.startswith("_"):
             continue
         try:
-            yield json.loads(percorso.read_text(encoding="utf-8"))
+            pagina = json.loads(percorso.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             logger.warning("%s: JSON illeggibile (%s)", percorso, exc)
+            continue
+        registro = (pagina.get("_origine") or {}).get("registro")
+        if ammessi is not None and registro is not None and registro not in ammessi:
+            saltati += 1
+            continue
+        yield pagina
+    if saltati:
+        logger.info(
+            "%d pagine ignorate: appartengono a registri esclusi dalla configurazione", saltati
+        )
+
+
+def _percorso_pulito(percorso: str | None) -> str | None:
+    r"""Percorso con separatori '/', qualunque sistema l'abbia scritto.
+
+    La fase 3 salva il percorso relativo dell'immagine col separatore del
+    sistema su cui gira: su Windows finisce nel database come
+    'registro\0049-pag-49.jpg', dove il backslash e' insieme illeggibile,
+    non portabile e — davanti a una cifra — perfino ambiguo, perche' in
+    parecchi linguaggi '\0' e' una sequenza di escape.
+    """
+    return percorso.replace("\\", "/") if percorso else percorso
 
 
 def _anno_da_data(data: str | None, ripiego: int | None) -> int | None:
@@ -119,6 +180,152 @@ def _anno_da_data(data: str | None, ripiego: int | None) -> int | None:
         if match:
             return int(match.group(1))
     return ripiego
+
+
+# I ruoli il cui cognome il formulario da' per implicito. Un atto di
+# nascita nomina "Maria, figlia di Giuseppe Colella": il cognome della
+# bambina non e' scritto da nessuna parte, ed e' corretto che la
+# trascrizione lo lasci vuoto — sulla pagina non c'e'.
+RUOLI_DA_DERIVARE = ("neonato",)
+
+# In quale ordine cercare il cognome da cui derivare.
+GENITORI = ("padre", "madre")
+
+
+def _deriva_cognome(persone: list[dict]) -> None:
+    """Da' un cognome a chi sulla pagina non ce l'ha, prendendolo dai genitori.
+
+    Nel solo 1809 sono 39 neonati su 45: senza questo il bambino resta
+    introvabile per cognome, cioe' proprio nella ricerca per cui il
+    database esiste.
+
+    L'inferenza viene **segnata** in ``cognome_origine``, mai confusa con
+    una lettura. Non e' pignoleria: i figli naturali e gli esposti sono
+    una categoria storicamente importante, e sono esattamente i casi in
+    cui il cognome del padre non c'e' o non si applica. Riempire in
+    silenzio cancellerebbe il dato piu' interessante che quelle nascite
+    portano con se'.
+
+    Modifica la lista sul posto.
+    """
+    genitori = {
+        p["ruolo"]: p["cognome"]
+        for p in persone
+        if p.get("ruolo") in GENITORI and p.get("cognome")
+    }
+    if not genitori:
+        return
+    for persona in persone:
+        if persona.get("ruolo") not in RUOLI_DA_DERIVARE or persona.get("cognome"):
+            continue
+        for ruolo in GENITORI:
+            if genitori.get(ruolo):
+                persona["cognome"] = genitori[ruolo]
+                persona["cognome_origine"] = ruolo
+                break
+
+
+def _applica_alternative(conn: sqlite3.Connection) -> dict[str, str]:
+    """Sfrutta le seconde letture che il modello ha annotato nelle note.
+
+    Gira **prima** del raggruppamento per somiglianza, perche' arriva
+    dove quello non puo': 'Tommolilli' dista 0,67 da 'Femminilli', sotto
+    qualunque soglia sensata, ma l'alternativa che il modello stesso
+    aveva annotato — 'Iemminilli' — dista 0,90. Correggere prima significa
+    anche che le frequenze su cui il raggruppamento decide sono gia'
+    quelle giuste.
+    """
+    attestate = Counter(
+        {
+            cognome: quanti
+            for cognome, quanti in conn.execute(
+                "SELECT cognome, COUNT(*) FROM persone WHERE incerto = 0 "
+                "AND cognome_origine = 'atto' AND cognome IS NOT NULL "
+                "GROUP BY cognome"
+            )
+        }
+    )
+    incerte = conn.execute(
+        "SELECT cognome, note FROM persone WHERE incerto = 1 "
+        "AND cognome_origine = 'atto' AND cognome IS NOT NULL"
+    ).fetchall()
+
+    corrette = normalizza.correzioni_dalle_alternative(list(incerte), attestate)
+    for variante, forma in corrette.items():
+        conn.execute("UPDATE persone SET cognome = ? WHERE cognome = ?", (forma, variante))
+        conn.execute(
+            "UPDATE voci_indice SET cognome = ? WHERE cognome = ?", (forma, variante)
+        )
+    if corrette:
+        logger.info(
+            "Corretti dalle letture alternative annotate: %s",
+            ", ".join(f"{a} -> {b}" for a, b in sorted(corrette.items())),
+        )
+    return corrette
+
+
+def _proposte_toponimi(conn: sqlite3.Connection) -> list[normalizza.Proposta]:
+    """Le contrade lette in piu' modi, da sottoporre a chi conosce il paese.
+
+    A differenza dei cognomi qui **non si corregge niente in automatico**,
+    e non per prudenza: la correzione dei toponimi avviene per
+    sostituzione dentro una frase intera ("in questa Comune di
+    Torrebruna, strada a piedi la <toponimo>"), e quel lavoro lo fa gia'
+    il glossario. Quello che manca e' sapere quale delle grafie sia
+    quella buona — e lo sa solo chi in quelle strade ci e' passato.
+
+    Il caso che ha portato qui: la sola 'Rua di Nuorro' compare letta
+    come 'Lama di Nuorro', 'Via di Nuovo', 'Bua di Nuovo' e 'Rua di
+    Nuovo'. Nessuna statistica sceglie fra queste; un abitante sì.
+    """
+    valori = [
+        riga[0]
+        for riga in conn.execute("SELECT residenza_letta FROM persone WHERE residenza_letta IS NOT NULL")
+    ] + [
+        riga[0] for riga in conn.execute("SELECT luogo_letto FROM atti WHERE luogo_letto IS NOT NULL")
+    ]
+
+    # Ogni nucleo si porta dietro la forma leggibile piu' ricorrente, che
+    # e' quella che poi finira' nel glossario.
+    frequenze: Counter[str] = Counter()
+    leggibili: dict[str, Counter[str]] = {}
+    for valore in valori:
+        nucleo = normalizza.nucleo_toponimo(valore)
+        if not nucleo:
+            continue
+        riscontro = normalizza._TOPONIMO.search(valore)
+        forma = normalizza.separa_incertezza(riscontro.group(0))[0] if riscontro else None
+        if not forma:
+            continue
+        frequenze[nucleo] += 1
+        leggibili.setdefault(nucleo, Counter())[forma.strip()] += 1
+
+    def leggibile(nucleo: str) -> str:
+        return leggibili[nucleo].most_common(1)[0][0]
+
+    # I gruppi si presentano **piatti**: tutte le grafie di una contrada
+    # sotto una sola voce. Le coppie a catena — 'Fiascinella' che rimanda
+    # a 'Fraccinella' che rimanda a 'Fraginella' — sono corrette ma
+    # illeggibili per chi deve solo dire quale sia la forma buona, e qui
+    # il destinatario e' una persona, non il codice.
+    proposte: list[normalizza.Proposta] = []
+    for gruppo in normalizza._raggruppa(list(frequenze), normalizza.SOGLIA_TOPONIMI):
+        if len(gruppo) < 2:
+            continue
+        capofila = max(sorted(gruppo), key=lambda n: frequenze[n])
+        for nucleo in sorted(gruppo, key=lambda n: -frequenze[n]):
+            if nucleo == capofila or leggibile(nucleo) == leggibile(capofila):
+                continue
+            proposte.append(
+                normalizza.Proposta(
+                    letto=leggibile(nucleo),
+                    proposto=leggibile(capofila),
+                    occorrenze_lette=frequenze[nucleo],
+                    occorrenze_proposte=frequenze[capofila],
+                    somiglianza=paleografia.somiglianza(nucleo, capofila),
+                )
+            )
+    return proposte
 
 
 def _unifica_varianti(conn: sqlite3.Connection) -> list[normalizza.Proposta]:
@@ -136,12 +343,18 @@ def _unifica_varianti(conn: sqlite3.Connection) -> list[normalizza.Proposta]:
     sente non vengono toccate: tornano indietro come proposte per il
     glossario, dove decide chi conosce il paese.
     """
+    # Solo i cognomi **letti** fanno testo. Un cognome derivato dal padre
+    # e' una copia della stessa lettura, non una seconda testimonianza:
+    # contarlo gonfierebbe la dominanza di quella forma con l'eco di se
+    # stessa, e la dominanza e' proprio cio' che decide se una variante si
+    # corregge da sola o va sottoposta a una persona.
     frequenze = Counter(
         {
             cognome: quanti
             for cognome, quanti in conn.execute(
                 "SELECT cognome, COUNT(*) FROM persone "
-                "WHERE cognome IS NOT NULL AND cognome <> '' GROUP BY cognome"
+                "WHERE cognome IS NOT NULL AND cognome <> '' "
+                "AND cognome_origine = 'atto' GROUP BY cognome"
             )
         }
     )
@@ -184,14 +397,25 @@ def costruisci(config: Config) -> Path:
     corrette: Counter[str] = Counter()
 
     def _con_glossario(valore: str | None, campo: str) -> str | None:
-        pulito, _ = normalizza.separa_incertezza(valore)
+        return _con_glossario_e_dubbio(valore, campo)[0]
+
+    def _con_glossario_e_dubbio(valore: str | None, campo: str) -> tuple[str | None, bool]:
+        pulito, incerto = normalizza.separa_incertezza(valore)
         corretto, applicate = glossario_locale.correggi_campo(pulito, campo)
         for c in applicate:
             corrette[f"{c.letto} -> {c.corretto}"] += 1
-        return corretto
+        return corretto, incerto
 
     n_atti = n_persone = n_pagine = n_voci = 0
-    for pagina in leggi_trascrizioni(config.trascrizioni):
+    # Gli slug che la configurazione tiene. Senza catalogo — una raccolta
+    # trascritta a mano — si prende tutto quello che c'e'.
+    ammessi = None
+    if config.catalogo.exists():
+        from history_maker.catalogo import Catalogo, selezione
+
+        ammessi = {r.slug for r in selezione(Catalogo.carica(config.catalogo), config)}
+
+    for pagina in leggi_trascrizioni(config.trascrizioni, ammessi):
         origine = pagina.get("_origine", {})
         n_pagine += 1
         conn.execute(
@@ -210,7 +434,7 @@ def costruisci(config: Config) -> Path:
                 "cognome, cognome_letto) VALUES (?,?,?,?,?,?)",
                 (
                     origine.get("registro"),
-                    origine.get("immagine"),
+                    _percorso_pulito(origine.get("immagine")),
                     voce.get("numero_atto"),
                     # Le voci d'indice servono a un solo scopo: essere
                     # confrontate con i cognomi letti negli atti. Un
@@ -227,20 +451,23 @@ def costruisci(config: Config) -> Path:
             cursore = conn.execute(
                 """INSERT INTO atti (registro, immagine, numero_atto, tipo, anno,
                                      data_atto, data_evento, ora_evento, luogo,
-                                     luogo_letto, testo_integrale, affidabilita,
-                                     incertezze)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                     luogo_letto, luogo_incerto, via, testo_integrale,
+                                     affidabilita, incertezze)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     origine.get("registro"),
-                    origine.get("immagine"),
+                    _percorso_pulito(origine.get("immagine")),
                     atto.get("numero_atto"),
                     atto.get("tipo"),
                     _anno_da_data(atto.get("data_atto"), origine.get("anno")),
                     atto.get("data_atto"),
                     atto.get("data_evento"),
                     atto.get("ora_evento"),
-                    _con_glossario(atto.get("luogo"), "luogo"),
+                    *_con_glossario_e_dubbio(atto.get("luogo"), "luogo"),
                     atto.get("luogo"),
+                    normalizza.via_da(
+                        _con_glossario(atto.get("luogo"), "luogo"), config.comune
+                    ),
                     atto.get("testo_integrale"),
                     atto.get("affidabilita"),
                     "; ".join(atto.get("parti_illeggibili") or []) or None,
@@ -248,39 +475,58 @@ def costruisci(config: Config) -> Path:
             )
             id_atto = cursore.lastrowid
             n_atti += 1
+            # Le persone si preparano tutte prima di scriverle: il cognome
+            # di un neonato si ricava da quello del padre, che sta in
+            # un'altra riga dello stesso atto.
+            preparate = []
             for persona in atto.get("persone") or []:
                 nome, nome_incerto = normalizza.separa_incertezza(persona.get("nome"))
                 _, cognome_incerto = normalizza.separa_incertezza(persona.get("cognome"))
                 cognome = _con_glossario(persona.get("cognome"), "cognome")
+                residenza, residenza_incerta = _con_glossario_e_dubbio(
+                    persona.get("residenza"), "luogo"
+                )
+                preparate.append(
+                    {
+                        "ruolo": persona.get("ruolo"),
+                        "nome": nome,
+                        "nome_letto": persona.get("nome"),
+                        "cognome": cognome,
+                        "cognome_letto": persona.get("cognome"),
+                        "cognome_origine": "atto" if cognome else None,
+                        "incerto": int(nome_incerto or cognome_incerto),
+                        "eta": persona.get("eta"),
+                        "professione": persona.get("professione"),
+                        "residenza": residenza,
+                        "residenza_letta": persona.get("residenza"),
+                        "residenza_incerta": int(residenza_incerta),
+                        "via": normalizza.via_da(residenza, config.comune),
+                        "stato_vitale": persona.get("stato_vitale"),
+                        "note": persona.get("note"),
+                    }
+                )
+            _deriva_cognome(preparate)
+
+            for persona in preparate:
                 conn.execute(
                     """INSERT INTO persone (atto, ruolo, nome, nome_letto,
-                                            cognome, cognome_letto, incerto, eta,
-                                            professione, residenza, residenza_letta,
+                                            cognome, cognome_letto, cognome_origine,
+                                            incerto, eta, professione, residenza,
+                                            residenza_letta, residenza_incerta, via,
                                             stato_vitale, note)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        id_atto,
-                        persona.get("ruolo"),
-                        nome,
-                        persona.get("nome"),
-                        cognome,
-                        persona.get("cognome"),
-                        int(nome_incerto or cognome_incerto),
-                        persona.get("eta"),
-                        persona.get("professione"),
-                        # La residenza e' una frase intera che contiene il
-                        # toponimo: "in questo Comune di Torrebruna, strada
-                        # a piedi della Lama di Nuorro". Il glossario
-                        # corregge dentro la frase, non l'intero campo.
-                        _con_glossario(persona.get("residenza"), "luogo"),
-                        persona.get("residenza"),
-                        persona.get("stato_vitale"),
-                        persona.get("note"),
-                    ),
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (id_atto, *(persona[c] for c in (
+                        "ruolo", "nome", "nome_letto", "cognome", "cognome_letto",
+                        "cognome_origine", "incerto", "eta", "professione",
+                        "residenza", "residenza_letta", "residenza_incerta", "via",
+                        "stato_vitale", "note",
+                    ))),
                 )
                 n_persone += 1
 
+    _applica_alternative(conn)
     proposte = _unifica_varianti(conn)
+    toponimi = _proposte_toponimi(conn)
 
     conn.execute(
         "INSERT INTO atti_fts(rowid, testo_integrale, numero_atto, luogo) "
@@ -298,14 +544,18 @@ def costruisci(config: Config) -> Path:
             ", ".join(f"{k} ({n})" for k, n in sorted(corrette.items())),
         )
 
-    _esporta_csv(conn, config.dataset)
+    _esporta_csv(conn, config.dataset, config.csv_separatore)
     (config.dataset / "sintesi.md").write_text(sintesi(conn, config), encoding="utf-8")
-    _scrivi_proposte(config, proposte)
+    _scrivi_proposte(config, proposte, toponimi)
     conn.close()
     return percorso_db
 
 
-def _scrivi_proposte(config: Config, proposte: list[normalizza.Proposta]) -> Path:
+def _scrivi_proposte(
+    config: Config,
+    proposte: list[normalizza.Proposta],
+    toponimi: list[normalizza.Proposta] | None = None,
+) -> Path:
     """Scrive le varianti da decidere gia' in forma di glossario.
 
     Il file e' pronto da incollare in ``glossario-*.yaml``: chi decide non
@@ -336,23 +586,120 @@ def _scrivi_proposte(config: Config, proposte: list[normalizza.Proposta]) -> Pat
         "",
         "cognomi:",
     ]
+    # Le varianti vanno raccolte sotto la forma proposta: in YAML una
+    # chiave ripetuta sovrascrive in silenzio la precedente, quindi un
+    # elenco con 'Lella:' scritto tre volte perderebbe due proposte su
+    # tre senza dirlo a nessuno.
+    per_forma: dict[str, list[normalizza.Proposta]] = {}
     for p in proposte:
-        righe.append(f"  # {p.motivo}")
-        righe.append(f"  {p.proposto}:")
-        righe.append(f"    - {p.letto}")
+        per_forma.setdefault(p.proposto, []).append(p)
+
+    for forma, gruppo in per_forma.items():
+        righe.append(f"  {forma}:")
+        for p in gruppo:
+            righe.append(f"    # {p.motivo}")
+            righe.append(f"    - {p.letto}")
     righe.append("")
+
+    if toponimi:
+        righe += [
+            "# Contrade lette in piu' modi. Qui NON si corregge niente in",
+            "# automatico: la sola 'Rua di Nuorro' compare come 'Lama di Nuorro',",
+            "# 'Via di Nuovo' e 'Bua di Nuovo', e fra queste non sceglie una",
+            "# statistica — sceglie chi in quelle strade ci e' passato.",
+            "#",
+            "# Le strade di un paese sono pero' un insieme CHIUSO: non esiste la",
+            "# 'via forestiera vera' che rende rischioso unificare i cognomi.",
+            "# Qui si puo' essere decisi.",
+            "",
+            "toponimi:",
+        ]
+        per_luogo: dict[str, list[normalizza.Proposta]] = {}
+        for t in toponimi:
+            per_luogo.setdefault(t.proposto, []).append(t)
+        for forma, gruppo in per_luogo.items():
+            righe.append(f"  {forma}:")
+            for t in gruppo:
+                righe.append(
+                    f"    # letto {t.occorrenze_lette} volte, "
+                    f"'{t.proposto}' {t.occorrenze_proposte}"
+                )
+                righe.append(f"    - {t.letto}")
+        righe.append("")
 
     percorso.write_text("\n".join(righe), encoding="utf-8")
     logger.info("Proposte per il glossario: %s", percorso)
     return percorso
 
 
-def _esporta_csv(conn: sqlite3.Connection, cartella: Path) -> None:
-    for tabella in ("atti", "persone", "voci_indice"):
-        cursore = conn.execute(f"SELECT * FROM {tabella}")
+# I CSV servono a chi apre un foglio di calcolo, non a chi scrive SQL: la
+# tabella 'persone' da sola contiene un 'atto' che e' un numero e basta,
+# quindi per rispondere a "chi sono i morti del 1809" bisognerebbe
+# incrociarla a mano con 'atti'. Portarsi dietro anno e tipo dell'atto
+# rende il file utilizzabile da solo.
+# I ruoli che nell'atto hanno dei genitori nominati. Un testimone o un
+# ufficiale compaiono nello stesso atto ma i genitori che vi figurano non
+# sono i suoi.
+_RUOLI_CON_GENITORI = "('neonato', 'sposo', 'sposa', 'defunto')"
+
+
+def _genitore(ruolo: str) -> str:
+    """Sotto-query che rende il genitore, **solo** se e' inequivocabile.
+
+    Un atto di nascita nomina un padre solo, e attribuirlo al neonato non
+    e' una scelta. Un matrimonio ne nomina due — quello dello sposo e
+    quello della sposa — e il ruolo non dice quale sia quale: li' il campo
+    resta vuoto. Meglio un buco dichiarato che una parentela inventata,
+    tanto piu' in un lavoro che deve ricostruire alberi genealogici.
+    """
+    return f"""
+        CASE WHEN p.ruolo IN {_RUOLI_CON_GENITORI}
+              AND (SELECT COUNT(*) FROM persone g
+                   WHERE g.atto = p.atto AND g.ruolo = '{ruolo}') = 1
+        THEN (SELECT TRIM(COALESCE(g.nome, '') || ' ' || COALESCE(g.cognome, ''))
+              FROM persone g WHERE g.atto = p.atto AND g.ruolo = '{ruolo}')
+        END
+    """
+
+
+QUERY_CSV = {
+    "atti": "SELECT * FROM atti",
+    "persone": f"""
+        SELECT p.id, p.atto, a.anno, a.tipo AS tipo_atto, a.numero_atto,
+               a.data_atto, a.registro, a.immagine,
+               p.ruolo, p.nome, p.nome_letto, p.cognome, p.cognome_letto,
+               p.cognome_origine, p.incerto, p.eta, p.professione,
+               {_genitore('padre')} AS padre,
+               {_genitore('madre')} AS madre,
+               p.residenza, p.residenza_letta,
+               -- La contrada: quella scritta per la persona se l'atto la
+               -- nomina, altrimenti quella dell'evento. I due modelli la
+               -- mettono in posti diversi e questa COALESCE e' cio' che
+               -- rende la colonna indipendente da chi ha letto.
+               COALESCE(p.via, a.via) AS via,
+               p.stato_vitale, p.note
+        FROM persone p LEFT JOIN atti a ON a.id = p.atto
+        ORDER BY a.anno, a.numero_atto, p.id
+    """,
+    "voci_indice": "SELECT * FROM voci_indice",
+}
+
+
+def _esporta_csv(conn: sqlite3.Connection, cartella: Path, separatore: str = ";") -> None:
+    for tabella, query in QUERY_CSV.items():
+        cursore = conn.execute(query)
         intestazioni = [d[0] for d in cursore.description]
-        with (cartella / f"{tabella}.csv").open("w", newline="", encoding="utf-8") as handle:
-            scrittore = csv.writer(handle)
+        with (cartella / f"{tabella}.csv").open(
+            "w",
+            newline="",
+            # 'utf-8-sig' scrive il BOM. Senza, Excel apre il file con la
+            # codepage di sistema e ogni accento diventa mojibake: 'eta''
+            # si legge 'etÃ '. Il BOM e' l'unico modo di dirgli che il file
+            # e' UTF-8, e gli altri strumenti (pandas, R, LibreOffice) lo
+            # riconoscono e lo scartano da soli.
+            encoding="utf-8-sig",
+        ) as handle:
+            scrittore = csv.writer(handle, delimiter=separatore)
             scrittore.writerow(intestazioni)
             scrittore.writerows(cursore)
 

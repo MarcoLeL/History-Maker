@@ -56,9 +56,13 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--elenca", action="store_true", help="mostra cosa scaricherebbe e si ferma")
     _anni(p, "scarica solo i registri di quest'anno")
 
-    p = sotto.add_parser(
-        "transcribe", help="fase 3: fa trascrivere le immagini a Claude Code (abbonamento)"
-    )
+    p = sotto.add_parser("transcribe", help="fase 3: fa trascrivere le immagini a un modello")
+    p.add_argument("--backend", default=None, choices=["gemini", "claude-code"],
+                   help="motore di trascrizione (default: dal file di configurazione)")
+    p.add_argument("--modello", default=None,
+                   help="modello del backend scelto, es. gemini-3.6-flash o claude-opus-5")
+    p.add_argument("--senza-testo-integrale", action="store_true",
+                   help="non chiedere la trascrizione diplomatica: un terzo di token in meno")
     p.add_argument("--limite", type=int, default=None, help="trascrive solo le prime N pagine")
     p.add_argument("--stima", action="store_true", help="mostra chiamate, contesto e tempo, poi si ferma")
     p.add_argument("--rifai", action="store_true", help="ritrascrive anche le pagine gia' fatte")
@@ -66,7 +70,25 @@ def _parser() -> argparse.ArgumentParser:
                    help="quando la quota si esaurisce, aspetta il rinnovo invece di fermarsi")
     p.add_argument("--pagine-per-chiamata", type=int, default=None,
                    help="pagine per invocazione (default: dal file di configurazione)")
+    p.add_argument("--parallele", type=int, default=None,
+                   help="chiamate aperte insieme; le partenze restano scandite dal ritmo")
     _anni(p, "trascrive solo le pagine di quest'anno")
+
+    sotto.add_parser(
+        "modelli",
+        help="quali modelli accetta la tua chiave (non consuma quota di generazione)",
+    )
+
+    p = sotto.add_parser(
+        "confronta",
+        help="mette due letture delle stesse pagine a confronto (non consuma quota)",
+    )
+    p.add_argument("prima", type=Path, help="cartella di trascrizioni")
+    p.add_argument("seconda", type=Path, help="l'altra cartella di trascrizioni")
+    p.add_argument("--divergenze", type=int, default=40,
+                   help="quante divergenze elencare (default 40)")
+    p.add_argument("--rapporto", type=Path, default=None,
+                   help="scrive il rapporto su file invece che a schermo")
 
     sotto.add_parser("dataset", help="fase 4: costruisce database, CSV e sintesi")
     sotto.add_parser(
@@ -144,14 +166,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.comando == "transcribe":
-        from history_maker import claudecode, transcribe
+        from history_maker import backend as motori
+        from history_maker import transcribe
 
+        # Le opzioni sovrascrivono il file di configurazione solo per
+        # questa esecuzione: e' cosi' che si confrontano due motori sulle
+        # stesse pagine senza toccare il YAML fra una prova e l'altra.
+        modifiche = {}
         if args.pagine_per_chiamata:
+            modifiche["pagine_per_chiamata"] = args.pagine_per_chiamata
+        if args.backend:
+            modifiche["backend"] = args.backend
+        if args.modello:
+            modifiche["modello"] = args.modello
+        if args.senza_testo_integrale:
+            modifiche["testo_integrale"] = False
+        if args.parallele:
+            modifiche["chiamate_parallele"] = args.parallele
+        if modifiche:
             config = dataclasses.replace(
-                config,
-                trascrizione=dataclasses.replace(
-                    config.trascrizione, pagine_per_chiamata=args.pagine_per_chiamata
-                ),
+                config, trascrizione=dataclasses.replace(config.trascrizione, **modifiche)
             )
 
         pagine = transcribe.pagine_da_trascrivere(
@@ -165,20 +199,76 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             esito = transcribe.esegui(config, pagine, attendi_quota=args.attendi)
-        except claudecode.ClaudeCodeNonTrovato as exc:
+        except motori.BackendNonDisponibile as exc:
             print(exc, file=sys.stderr)
             return 2
 
         print(
             f"\nTrascritte {esito.trascritte}/{len(pagine)} pagine "
-            f"({esito.fallite} fallite) in {esito.chiamate} invocazioni."
+            f"({esito.fallite} fallite) in {esito.chiamate} chiamate."
         )
+        # I token consumati non sono un dettaglio contabile: il limite di
+        # token al minuto e' cio' che mette il tetto a 'pagine_per_chiamata',
+        # e senza vedere il consumo reale quel numero si sceglie a caso.
+        if esito.token_contesto or esito.token_output:
+            def _mille(n: float) -> str:
+                """Separatore delle migliaia all'italiana: 16.246, non 16,246."""
+                return f"{n:,.0f}".replace(",", ".")
+
+            per_pagina = (esito.token_contesto + esito.token_output) / max(1, esito.trascritte)
+            print(
+                f"Token: {_mille(esito.token_contesto)} in ingresso, "
+                f"{_mille(esito.token_output)} in uscita — "
+                f"~{_mille(per_pagina)} a pagina, "
+                f"~{_mille(esito.token_contesto / max(1, esito.chiamate))} in ingresso "
+                f"per chiamata."
+            )
         if esito.quota_esaurita:
             print(
-                "\nLa quota dell'abbonamento si e' esaurita. Il lavoro fatto e' salvato:\n"
+                "\nLa quota si e' esaurita. Il lavoro fatto e' salvato:\n"
                 "  rilancia lo stesso comando piu' tardi per riprendere,\n"
                 "  oppure aggiungi --attendi per lasciarlo proseguire da solo."
             )
+        return 0
+
+    if args.comando == "modelli":
+        from history_maker import backend as motori
+
+        motore = motori.crea(config)
+        if not hasattr(motore, "modelli_disponibili"):
+            print(
+                f"Il backend '{motore.nome}' non espone un elenco di modelli.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            disponibili = motore.modelli_disponibili()
+        except motori.BackendNonDisponibile as exc:
+            print(exc, file=sys.stderr)
+            return 2
+
+        attuale = config.trascrizione.modello
+        print(f"Modelli utilizzabili con la tua chiave ({len(disponibili)}):\n")
+        for nome in disponibili:
+            print(f"  {'->' if nome == attuale else '  '} {nome}")
+        if attuale not in disponibili:
+            print(
+                f"\nAttenzione: '{attuale}', il modello in configurazione, non e' "
+                f"nell'elenco.\nCorreggi 'trascrizione.modello' in config/torrebruna.yaml."
+            )
+        return 0
+
+    if args.comando == "confronta":
+        from history_maker import confronto
+
+        esito = confronto.confronta(args.prima, args.seconda)
+        testo = confronto.rapporto(esito, quante_divergenze=args.divergenze)
+        if args.rapporto:
+            args.rapporto.parent.mkdir(parents=True, exist_ok=True)
+            args.rapporto.write_text(testo, encoding="utf-8")
+            print(f"Rapporto: {args.rapporto}")
+        else:
+            print(testo)
         return 0
 
     if args.comando == "dataset":
@@ -215,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _stato(config: Config) -> None:
     """Riassume a che punto sono le quattro fasi."""
-    from history_maker.catalogo import Catalogo, pertinente
+    from history_maker.catalogo import Catalogo, selezione
 
     print(f"Comune: {config.comune} ({config.anno_min}-{config.anno_max})\n")
 
@@ -223,7 +313,7 @@ def _stato(config: Config) -> None:
         print("1. scoperta     non ancora fatta  ->  python -m history_maker discover")
         return
     catalogo = Catalogo.carica(config.catalogo)
-    selezionati = [r for r in catalogo.registri if pertinente(r, config)[0]]
+    selezionati = selezione(catalogo, config)
     attese = sum(r.n_immagini or 0 for r in selezionati)
     print(f"1. scoperta     {len(catalogo.registri)} registri, {len(selezionati)} selezionati")
 

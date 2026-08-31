@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from history_maker import paleografia
 
@@ -93,6 +93,17 @@ def separa_incertezza(valore: str | None) -> tuple[str | None, bool]:
 # 'Colella' stanno a 0,71 e devono restare separate.
 SOGLIA_GRUPPO = 0.80
 
+# Sui toponimi si puo' scendere: le contrade di un paese sono un insieme
+# CHIUSO — non esiste la "via forestiera vera" che rende rischioso unire
+# due cognomi — e soprattutto qui non si corregge niente in automatico,
+# si propone soltanto. Una soglia piu' generosa mette qualche accostamento
+# in piu' sotto gli occhi di chi sa, e non sporca nessun dato.
+# Serve davvero: 'rua nuorro' e 'rua nuovo' stanno a 0,78 e 'lama nuorro'
+# a 0,70, quindi con la soglia dei cognomi la stessa contrada resterebbe
+# divisa in tre. Piu' in basso pero' non si scende: a 0,65 'Porta del
+# Colle' si mangia 'Portamurella', che e' un altro posto.
+SOGLIA_TOPONIMI = 0.70
+
 # Quando applicare da soli, invece di proporre. Le due regole si leggono
 # come un compromesso fra quanto le forme si somigliano e quanto la
 # maggioritaria domina: piu' sono simili, meno dominanza serve.
@@ -127,7 +138,7 @@ class Proposta:
         )
 
 
-def _raggruppa(forme: list[str]) -> list[list[str]]:
+def _raggruppa(forme: list[str], soglia: float = SOGLIA_GRUPPO) -> list[list[str]]:
     """Raccoglie in gruppi le forme che si somigliano.
 
     Le forme vengono unite per contatto: se A somiglia a B e B a C,
@@ -146,7 +157,7 @@ def _raggruppa(forme: list[str]) -> list[list[str]]:
     for i, a in enumerate(forme):
         for b in forme[i + 1 :]:
             vicine = paleografia.forma_canonica(a) == paleografia.forma_canonica(b) or (
-                paleografia.somiglianza(a, b) >= SOGLIA_GRUPPO
+                paleografia.somiglianza(a, b) >= soglia
             )
             if vicine:
                 ra, rb = radice(a), radice(b)
@@ -157,6 +168,35 @@ def _raggruppa(forme: list[str]) -> list[list[str]]:
     for f in forme:
         gruppi.setdefault(radice(f), []).append(f)
     return list(gruppi.values())
+
+
+def _piu_vicina(
+    variante: str, gruppo: list[str], frequenze: Counter[str]
+) -> tuple[str | None, float]:
+    """La forma piu' simile alla variante, fra quelle piu' attestate di lei.
+
+    Una proposta ha senso solo verso una forma **vicina**, e la vicinanza
+    va misurata direttamente: attraverso la catena del gruppo si arriva a
+    forme che non si somigliano affatto.
+
+    Due forme ugualmente attestate restano una proposta — sono comunque
+    la stessa famiglia scritta in due modi, e la scelta spetta a chi
+    legge — ma la coppia va sottoposta una volta sola: a parita' di
+    occorrenze si propone sempre dalla forma alfabeticamente successiva
+    verso la precedente, altrimenti comparirebbero entrambe le direzioni.
+    """
+    migliore, punteggio = None, 0.0
+    for altra in sorted(gruppo):
+        if altra == variante:
+            continue
+        if frequenze[altra] < frequenze[variante]:
+            continue
+        if frequenze[altra] == frequenze[variante] and altra > variante:
+            continue
+        simile = paleografia.somiglianza(variante, altra)
+        if simile >= SOGLIA_GRUPPO and simile > punteggio:
+            migliore, punteggio = altra, simile
+    return migliore, punteggio
 
 
 def _abbastanza_evidente(somiglianza: float, dominanza: float) -> bool:
@@ -185,16 +225,21 @@ def raggruppa_varianti(
     for gruppo in _raggruppa(list(frequenze)):
         if len(gruppo) < 2:
             continue
-        # La forma piu' attestata fa da capofila; a parita' vince
-        # l'ordine alfabetico, per non dipendere dall'ordine di lettura.
-        canonica = max(sorted(gruppo), key=lambda f: frequenze[f])
 
         for variante in gruppo:
-            if variante == canonica:
+            # Ogni variante si giudica contro la sua parente piu' stretta
+            # fra le forme almeno altrettanto attestate, non contro il
+            # capofila del gruppo: 'Cicchilitto' e 'Cicchillitto' sono la
+            # stessa forma a meno di una doppia e devono unirsi fra loro,
+            # anche se il capofila del gruppo e' la forma in -i. La forma
+            # piu' attestata di tutte non ha nessun bersaglio e resta dov'e'.
+            bersaglio, simile = _piu_vicina(variante, gruppo, frequenze)
+            if bersaglio is None:
                 continue
+
             quante = frequenze[variante]
-            dominanza = frequenze[canonica] / quante if quante else float("inf")
-            simile = paleografia.somiglianza(variante, canonica)
+            dominanza = frequenze[bersaglio] / quante if quante else float("inf")
+            canonica = bersaglio
 
             # Due gradi di "e' la stessa cosa scritta diversamente".
             # La prima e' sola punteggiatura — "Dettorre" e "d'Ettorre"
@@ -221,16 +266,280 @@ def raggruppa_varianti(
                 stessa_stringa or stessa_canonica or _abbastanza_evidente(simile, dominanza)
             ):
                 correzioni[variante] = canonica
-            else:
-                proposte.append(
-                    Proposta(
-                        letto=variante,
-                        proposto=canonica,
-                        occorrenze_lette=quante,
-                        occorrenze_proposte=frequenze[canonica],
-                        somiglianza=simile,
-                    )
+                continue
+
+            proposte.append(
+                Proposta(
+                    letto=variante,
+                    proposto=bersaglio,
+                    occorrenze_lette=quante,
+                    occorrenze_proposte=frequenze[bersaglio],
+                    somiglianza=simile,
                 )
+            )
+
+    finali = _senza_catene(correzioni)
+
+    # Una proposta deve puntare a una forma che esistera' ancora dopo le
+    # correzioni automatiche. Senza questo si legge 'Bellicia -> Pellicia'
+    # mentre 'Pellicia' e' a sua volta gia' ricondotta a 'Pelliccia': la
+    # decisione verrebbe presa su una forma che nel database non c'e' piu'.
+    proposte = [
+        replace(
+            p,
+            proposto=finali.get(p.proposto, p.proposto),
+            occorrenze_proposte=frequenze[finali.get(p.proposto, p.proposto)],
+        )
+        for p in proposte
+        if finali.get(p.proposto, p.proposto) != p.letto
+    ]
 
     proposte.sort(key=lambda p: (-p.occorrenze_lette, p.letto))
-    return correzioni, proposte
+    return finali, proposte
+
+
+def _senza_catene(correzioni: dict[str, str]) -> dict[str, str]:
+    """Fa puntare ogni variante alla forma finale, non alla successiva.
+
+    Giudicando ogni variante contro la parente piu' stretta si formano
+    catene: 'Pellicia' verso 'Pellicci' e 'Pellicci' verso 'Pelliccia'.
+    Applicate cosi' com'e', la prima resterebbe su una forma che a sua
+    volta viene corretta.
+    """
+    risolte: dict[str, str] = {}
+    for variante in correzioni:
+        vista = {variante}
+        destinazione = correzioni[variante]
+        while destinazione in correzioni and destinazione not in vista:
+            vista.add(destinazione)
+            destinazione = correzioni[destinazione]
+        risolte[variante] = destinazione
+    return risolte
+
+
+# --- le letture alternative che il modello scrive nelle note ---------------
+#
+# Quando e' incerto, il modello non si limita a marcare il dubbio: spesso
+# scrive anche la seconda lettura che ha considerato — "(Tommolilli /
+# Iemminilli)", "'Pope', 'Popa' o simile", "(Iorzo[?] / Iorio)". Leggere
+# solo il campo 'cognome' butta via quell'informazione.
+#
+# E' un segnale di natura diversa dalla somiglianza, e arriva dove quella
+# non puo': 'Tommolilli' dista 0,67 da 'Femminilli', sotto qualunque
+# soglia sensata, ma la sua alternativa 'Iemminilli' dista 0,90. La catena
+# arriva a destinazione passando per l'alternativa, non per la forma letta.
+
+# Un cognome plausibile: iniziale maiuscola, poi lettere, apostrofi,
+# spazi e gli eventuali marcatori di dubbio del modello.
+_FORMA = r"[A-Z][A-Za-z\u00e0\u00e8\u00e9\u00ec\u00f2\u00f9'\u2019\[\]?. ]{2,24}"
+
+SCHEMI_ALTERNATIVA = (
+    re.compile(rf"\(({_FORMA})\s*/\s*({_FORMA})\)"),       # (Tommolilli / Iemminilli)
+    re.compile(rf"'({_FORMA})'\s*[,/]?\s*'({_FORMA})'"),   # 'Pope', 'Popa'
+    re.compile(rf"\b({_FORMA})\s*/\s*({_FORMA})\b"),       # Iorzo[?] / Iorio
+)
+
+
+def alternative_dalle_note(note: str | None) -> list[str]:
+    """Le grafie che la nota propone in alternativa a quella scelta.
+
+    Restituisce le forme ripulite dai marcatori di dubbio, senza
+    duplicati e nell'ordine in cui compaiono. Una nota che non propone
+    niente da' una lista vuota.
+    """
+    if not note:
+        return []
+
+    trovate: list[str] = []
+    for schema in SCHEMI_ALTERNATIVA:
+        for riscontro in schema.finditer(note):
+            for gruppo in riscontro.groups():
+                forma = separa_incertezza(gruppo)[0]
+                forma = forma.strip(" '\u2019.") if forma else None
+                if forma and forma not in trovate:
+                    trovate.append(forma)
+        if trovate:
+            break  # il primo schema che riconosce qualcosa e' il piu' specifico
+    return trovate
+
+
+def correzioni_dalle_alternative(
+    letture: list[tuple[str, str | None]],
+    attestate: Counter[str],
+    soglia: float = 0.85,
+    minimo_attestazioni: int = 3,
+) -> dict[str, str]:
+    """Corregge una lettura quando la sua alternativa e' una forma nota.
+
+    ``letture`` sono coppie ``(cognome, note)`` delle sole letture che il
+    modello ha dichiarato incerte; ``attestate`` sono le forme lette
+    **senza** dubbio, con quante volte ricorrono.
+
+    L'evidenza qui e' forte per due motivi che si sommano: il modello si
+    e' dichiarato insicuro, e ha proposto lui stesso una grafia che nel
+    corpus esiste gia' e viene letta senza esitazione da altre parti.
+    """
+    corrette: dict[str, str] = {}
+    for cognome, note in letture:
+        if not cognome or cognome in corrette or cognome in attestate:
+            continue
+        for alternativa in alternative_dalle_note(note):
+            migliore, punteggio = None, soglia
+            for forma, quante in attestate.items():
+                if quante < minimo_attestazioni:
+                    continue
+                simile = paleografia.somiglianza(alternativa, forma)
+                if simile >= punteggio:
+                    migliore, punteggio = forma, simile
+            if migliore and migliore != cognome:
+                corrette[cognome] = migliore
+                break
+    return corrette
+
+
+# --- toponimi ---------------------------------------------------------------
+#
+# Le contrade di un paese sono un insieme CHIUSO: una via o esiste o non
+# esiste, e non c'e' l'equivalente del "forestiero vero" che rende
+# rischioso unificare i cognomi. Per questo qui si puo' essere piu'
+# generosi. Restano proposte, non correzioni: a dire come si chiama
+# davvero una strada e' chi ci e' passato, non una distanza fra stringhe.
+
+# Le parole che introducono un toponimo nel formulario ottocentesco.
+_INTRODUCE = r"(?:strada|via|rua|contrada|porta|piazza|piano|lama|vico|largo)"
+
+# Il corpo del toponimo: quello che segue, fino alla prossima virgola.
+_TOPONIMO = re.compile(rf"\b{_INTRODUCE}\b[\s\w'\u2019àèéìòù\[\]?.]{{0,40}}", re.IGNORECASE)
+
+# Parole che non distinguono un toponimo dall'altro: compaiono in mezzo a
+# tutte le formule ("strada a piedi la...", "strada vicino il...") e se
+# entrassero nel confronto due vie diverse sembrerebbero simili solo
+# perche' condividono il preambolo.
+_VUOTE = {
+    "strada", "via", "della", "delle", "dello", "degli", "del", "di", "da",
+    "la", "il", "lo", "le", "li", "a", "al", "alla", "in", "vicino", "sotto",
+    "sopra", "dinanzi", "davanti", "avanti", "piedi", "capo", "cima", "fuori",
+    "questa", "questo", "detta", "detto", "comune", "sudetta", "suddetta",
+    "medesima", "istessa", "nella", "nel", "e", "ed", "che",
+}
+
+
+def nucleo_toponimo(valore: str | None) -> str | None:
+    """Il cuore distintivo di un toponimo, senza il preambolo di formula.
+
+    ``strada a piedi la Lama di Nuorro`` e ``strada della Rua di Nuovo``
+    si riducono a ``lama nuorro`` e ``rua nuovo``: quello che resta e' la
+    parte che davvero distingue una contrada dall'altra.
+    """
+    if not valore:
+        return None
+    riscontro = _TOPONIMO.search(valore)
+    if not riscontro:
+        return None
+    pulito = separa_incertezza(riscontro.group(0))[0] or ""
+    parole = [
+        p for p in re.split(r"[\s.]+", paleografia.normalizza(pulito)) if p and p not in _VUOTE
+    ]
+    return " ".join(parole) or None
+
+
+# La formula degli atti nomina il comune e la contrada nello stesso
+# respiro — "in Torrebruna, strada della Trascinella" — e i due modelli
+# li distribuiscono diversamente: Gemini mette il comune in
+# 'persona.residenza' e la contrada in 'atto.luogo', Claude infilava
+# entrambi nella residenza. Separarli qui, invece che chiederli separati
+# nel prompt, e' cio' che rende la colonna indipendente da chi ha letto.
+_SEPARATORI_LUOGO = re.compile(r"^\s*[,;:\-–—]\s*|\s*[,;:]\s*$")
+
+
+def separa_comune(valore: str | None, comune: str) -> tuple[str | None, str | None]:
+    """Divide un luogo nel comune e in cio' che lo precisa dentro il comune.
+
+    Restituisce ``(comune riconosciuto o None, resto o None)``.
+
+    >>> separa_comune("Torrebruna, strada della Trascinella", "Torrebruna")
+    ('Torrebruna', 'strada della Trascinella')
+    >>> separa_comune("Torrebruna", "Torrebruna")
+    ('Torrebruna', None)
+    >>> separa_comune("strada di Portamurella", "Torrebruna")
+    (None, 'strada di Portamurella')
+    >>> separa_comune("Castiglione Messer Marino", "Torrebruna")
+    (None, 'Castiglione Messer Marino')
+
+    Il comune si riconosce solo in TESTA: un "Torrebruna" che compare in
+    coda — "la Torre sopra Torrebruna" — e' parte della descrizione del
+    luogo, non l'intestazione, e toglierlo storpierebbe il toponimo.
+    """
+    if not valore:
+        return None, None
+    testo = valore.strip()
+    if not testo:
+        return None, None
+
+    atteso = paleografia.normalizza(comune)
+    parole = testo.split()
+    quante_del_comune = len(comune.split())
+    # La punteggiatura va tolta PRIMA del confronto: nella formula degli
+    # atti il comune e' quasi sempre seguito da una virgola attaccata
+    # ("Torrebruna, strada della Trascinella"), e confrontare
+    # "Torrebruna," con "Torrebruna" farebbe fallire il caso piu' comune
+    # di tutti.
+    testa = paleografia.normalizza(
+        " ".join(parole[:quante_del_comune]).strip(",;:.-–— ")
+    )
+    if not atteso or testa != atteso:
+        return None, testo or None
+
+    resto = " ".join(parole[quante_del_comune:])
+    resto = _SEPARATORI_LUOGO.sub("", resto).strip()
+    return comune, resto or None
+
+
+_HA_TOPONIMO = re.compile(rf"\b{_INTRODUCE}\b", re.IGNORECASE)
+
+# Una maiuscola in mezzo alla frase e' il segno che li' c'e' un nome
+# proprio — "sopra la Torre", "Coste delle Pecchie" — e non una formula
+# di cancelleria.
+_NOME_PROPRIO = re.compile(r"\b[A-ZÀ-Ü][a-zà-ü]")
+
+
+def via_da(luogo: str | None, comune: str) -> str | None:
+    """La parte di un luogo che precisa DOVE dentro il comune.
+
+    Contrada, strada, porta, la casa nominata dall'atto: cio' che serve a
+    sapere in che parte del paese viveva una famiglia. Un luogo che nomina
+    solo il comune non ha via, e restituisce ``None`` — un campo vuoto
+    dichiarato, non una stringa vuota che finge di essere un dato.
+
+    **Il comune di un forestiero non e' una via.** Una sposa di
+    ``Castiglione Messer Marino`` ha una residenza, non una contrada di
+    Torrebruna, e metterla in questa colonna renderebbe inservibile
+    proprio la domanda per cui la colonna esiste: in che parte del paese
+    stava una famiglia. Quindi cio' che non segue il nome del comune entra
+    solo se si annuncia come toponimo — ``strada``, ``rua``, ``contrada``,
+    ``porta`` — perche' i due modelli a volte scrivono la sola contrada
+    senza premettere il comune.
+
+    >>> via_da("Torrebruna, strada della Trascinella", "Torrebruna")
+    'strada della Trascinella'
+    >>> via_da("strada di Portamurella", "Torrebruna")
+    'strada di Portamurella'
+    >>> via_da("Castiglione Messer Marino", "Torrebruna") is None
+    True
+    >>> via_da("Torrebruna", "Torrebruna") is None
+    True
+    """
+    riconosciuto, resto = separa_comune(luogo, comune)
+    if resto is None:
+        return None
+    if _HA_TOPONIMO.search(resto):
+        return resto
+    # Senza una parola che annunci il toponimo, resta contrada solo cio'
+    # che porta un nome proprio: "sopra la Torre" si', "in casa di sua
+    # abitazione" no. Quella e' la formula con cui l'atto dice che
+    # l'evento e' avvenuto in casa — un'informazione vera, ma non un
+    # luogo del paese, e in una colonna che serve a raggruppare le
+    # famiglie per vicinato sarebbe solo rumore.
+    if riconosciuto is not None and _NOME_PROPRIO.search(resto):
+        return resto
+    return None

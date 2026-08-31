@@ -77,15 +77,23 @@ def test_due_forme_alla_pari_non_si_correggono_a_vicenda():
 
 
 def test_alternanza_o_i_resta_una_decisione_umana():
-    """L'alternanza -o/-i dei cognomi meridionali puo' essere una lettura
-    sbagliata o due rami della stessa famiglia: non la decide una
-    statistica."""
+    """Le due domande vanno separate.
+
+    La doppia instabile ('Cicchilitto'/'Cicchillitto') e' una convenzione
+    grafica nota e si unifica da sola. L'alternanza -o/-i invece puo'
+    essere una lettura sbagliata o due rami della stessa famiglia, e non
+    la decide una statistica.
+    """
     frequenze = {"Cicchilitti": 9, "Cicchillitto": 6, "Cicchilitto": 4}
-    assert correzioni(frequenze) == {}
-    assert proposte(frequenze) == {
-        "Cicchillitto": "Cicchilitti",
-        "Cicchilitto": "Cicchilitti",
-    }
+    assert correzioni(frequenze) == {"Cicchilitto": "Cicchillitto"}
+    assert proposte(frequenze) == {"Cicchillitto": "Cicchilitti"}
+
+
+def test_le_catene_di_correzione_si_risolvono():
+    """'Pellicia' verso 'Pellicci' verso 'Pelliccia': la prima deve
+    arrivare in fondo, non fermarsi a meta'."""
+    corr = correzioni({"Pelliccia": 60, "Pellicci": 6, "Pellicia": 3})
+    assert set(corr.values()) == {"Pelliccia"}
 
 
 def test_le_proposte_sono_ordinate_per_ricorrenza():
@@ -119,3 +127,85 @@ def test_una_variante_non_e_mai_anche_una_proposta():
     }
     corr, prop = raggruppa_varianti(Counter(frequenze))
     assert not (set(corr) & {p.letto for p in prop})
+
+
+# --- qualita' delle proposte -----------------------------------------------
+
+def test_la_proposta_va_verso_il_parente_piu_stretto():
+    """I gruppi si formano per contatto, le proposte no.
+
+    'Pilli'-'Silli'-'Lelle'-'Lella' finiscono nello stesso gruppo per
+    catena, ma proporre 'Pilli -> Lella' (somiglianza 0,54) sarebbe
+    rumore che fa perdere fiducia in tutto l'elenco.
+    """
+    _, prop = raggruppa_varianti(
+        Counter({"Lella": 34, "Lelle": 1, "Silli": 1, "Pilli": 2})
+    )
+    for p in prop:
+        assert p.somiglianza >= 0.80, f"{p.letto} -> {p.proposto} e' troppo lontano"
+
+
+def test_una_coppia_alla_pari_si_propone_una_volta_sola():
+    """Sono la stessa famiglia scritta in due modi, e vanno sottoposte.
+
+    Ma una volta sola: senza una direzione deterministica comparirebbero
+    sia 'Chiello -> Chielli' sia 'Chielli -> Chiello'.
+    """
+    _, prop = raggruppa_varianti(Counter({"Chiello": 1, "Chielli": 1}))
+    assert len(prop) == 1
+
+
+def test_le_proposte_si_raggruppano_per_forma_proposta(tmp_path):
+    """In YAML una chiave ripetuta sovrascrive in silenzio la precedente."""
+    from history_maker.config import Config
+    from history_maker.dataset import _scrivi_proposte
+
+    _, prop = raggruppa_varianti(
+        Counter({"Pizzi": 52, "Pozzi": 9, "Lizzi": 6})
+    )
+    config = Config(
+        comune="Torrebruna", termine_ricerca="Torrebruna", includi_contesto=[],
+        escludi_contesto=[], anno_min=1809, anno_max=1900, tipologie=[],
+        catalogo=tmp_path / "c.json", immagini=tmp_path / "i", ridotte=tmp_path / "r",
+        trascrizioni=tmp_path / "t", dataset=tmp_path,
+    )
+    testo = _scrivi_proposte(config, prop).read_text(encoding="utf-8")
+
+    import yaml
+    letto = yaml.safe_load(testo)["cognomi"]
+    # Le due varianti devono sopravvivere entrambe alla rilettura YAML.
+    assert sorted(letto["Pizzi"]) == ["Lizzi", "Pozzi"]
+    assert testo.count("  Pizzi:") == 1
+
+
+def test_una_proposta_non_punta_a_una_forma_che_sparira():
+    """'Bellicia -> Pellicia' mentre 'Pellicia' diventa 'Pelliccia'
+    farebbe decidere su una forma che nel database non c'e' piu'."""
+    _, prop = raggruppa_varianti(
+        Counter({"Pelliccia": 60, "Pellicia": 3, "Bellicia": 1})
+    )
+    corr = correzioni({"Pelliccia": 60, "Pellicia": 3, "Bellicia": 1})
+    for p in prop:
+        assert p.proposto not in corr, f"{p.proposto} viene a sua volta corretto"
+
+
+def test_i_toponimi_si_raggruppano_con_una_soglia_piu_bassa():
+    """Le contrade sono un insieme chiuso e qui si propone soltanto: si
+    puo' essere piu' generosi che sui cognomi.
+
+    Il caso vero: 'Rua di Nuorro' letta anche 'Lama di Nuorro' (0,70) e
+    'Rua di Nuovo' (0,78). Con la soglia dei cognomi resterebbe divisa in
+    tre contrade diverse.
+    """
+    from history_maker.normalizza import SOGLIA_GRUPPO, SOGLIA_TOPONIMI, _raggruppa
+
+    nuclei = ["rua nuorro", "lama nuorro", "rua nuovo"]
+    assert len(_raggruppa(nuclei, SOGLIA_GRUPPO)) == 3
+    assert len(_raggruppa(nuclei, SOGLIA_TOPONIMI)) == 1
+
+
+def test_la_soglia_dei_toponimi_non_fonde_luoghi_diversi():
+    """A 0,65 'Porta del Colle' si mangiava 'Portamurella'."""
+    from history_maker.normalizza import SOGLIA_TOPONIMI, _raggruppa
+
+    assert len(_raggruppa(["porta colle", "portamurella"], SOGLIA_TOPONIMI)) == 2

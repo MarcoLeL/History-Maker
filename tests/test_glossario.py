@@ -113,3 +113,50 @@ def test_il_glossario_del_progetto_si_carica():
     reale = Glossario.carica("config/glossario-torrebruna.yaml")
     toponimi, _ = reale.forme_note()
     assert "Rua di Nuorro" in toponimi
+
+
+# --- casi confermati sui registri veri del 1809 ----------------------------
+
+def test_la_differenza_di_sola_maiuscola_si_corregge(tmp_path):
+    """'Porta murella' e 'Porta Murella' hanno la stessa chiave di
+    confronto: scartarle come identiche lasciava per sempre la minuscola."""
+    percorso = tmp_path / "g.yaml"
+    percorso.write_text(
+        yaml.safe_dump({"toponimi": {"Porta Murella": ["Portamurella"]}}), encoding="utf-8"
+    )
+    g = Glossario.carica(percorso)
+    assert g.correggi_campo("strada della Porta murella", "luogo")[0] == (
+        "strada della Porta Murella"
+    )
+
+
+def test_la_forma_gia_giusta_non_viene_contata_come_correzione(tmp_path):
+    percorso = tmp_path / "g.yaml"
+    percorso.write_text(
+        yaml.safe_dump({"toponimi": {"Porta Murella": ["Portamurella"]}}), encoding="utf-8"
+    )
+    g = Glossario.carica(percorso)
+    valore, fatte = g.correggi_campo("strada della Porta Murella", "luogo")
+    assert valore == "strada della Porta Murella"
+    assert fatte == []
+
+
+def test_il_glossario_vero_raddrizza_le_contrade_di_torrebruna():
+    """Le tre contrade confermate da chi conosce il paese."""
+    g = Glossario.carica("config/glossario-torrebruna.yaml")
+    prove = {
+        "questa Comune, strada della Fiascinella": "questa Comune, strada della Trascinella",
+        "strada a piedi la Lama di Nuorro": "strada a piedi la Rua di Nuorro",
+        "strada della Rua di Nuovo": "strada della Rua di Nuorro",
+        "strada vicino la Porta delle Murelle": "strada vicino la Porta Murella",
+        # Verificate sull'originale: la 'R' di questa mano ha un occhiello
+        # che la fa leggere 'B' o 'V', e 'Nuorro' diventa 'Ricovro'.
+        "strada sul Capo della Via di Ricovro": "strada sul Capo della Rua di Nuorro",
+        "abitante a Capo la Cesa di nuovo": "abitante a Capo la Rua di Nuorro",
+    }
+    for letto, atteso in prove.items():
+        assert g.correggi_campo(letto, "luogo")[0] == atteso
+
+    # Due luoghi che NON vanno toccati: sono altre strade del paese.
+    for intatto in ("strada vicino la Porta del Colle", "strada di Sopra la Torre"):
+        assert g.correggi_campo(intatto, "luogo")[0] == intatto

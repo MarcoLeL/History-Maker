@@ -12,6 +12,7 @@ possibile per una ricerca storica.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 
@@ -119,6 +120,15 @@ PAGINA = {
             "type": ["string", "null"],
             "description": "note del trascrittore: stato di conservazione, annotazioni a margine, timbri",
         },
+        # Una scansione e' quasi sempre una doppia pagina, e sapere su
+        # quale meta' sta il testo dimezza il ritaglio quando una lettura
+        # va verificata sull'originale. Costa cinque token per pagina e
+        # rende il ritaglio esatto invece che stimato.
+        "lato_pagina": {
+            "type": ["string", "null"],
+            "enum": ["sinistra", "destra", "entrambe", None],
+            "description": "su quale meta' della scansione sta il testo compilato",
+        },
     },
     "required": [
         "tipo_pagina", "anno_indicato", "comune_indicato",
@@ -201,3 +211,44 @@ def valida_pagina(dati: Any) -> dict[str, Any]:
         [valida_voce_indice(v) for v in voci] if isinstance(voci, list) else []
     )
     return pagina
+
+
+# --- varianti dello schema -------------------------------------------------
+
+
+def schema_pagina(testo_integrale: bool = True) -> dict[str, Any]:
+    """Lo schema di una pagina, con o senza la trascrizione diplomatica.
+
+    ``testo_integrale`` e' un terzo dei token prodotti e serve alla
+    ricerca storica, non alla ricostruzione delle parentele. Toglierlo
+    dallo schema — e non solo dal prompt — e' cio' che impedisce al
+    modello di produrlo lo stesso quando lo schema e' imposto.
+    """
+    if testo_integrale:
+        return PAGINA
+
+    schema = copy.deepcopy(PAGINA)
+    atto = schema["properties"]["atti"]["items"]
+    atto["properties"].pop("testo_integrale", None)
+    atto["required"] = [c for c in atto["required"] if c != "testo_integrale"]
+    return schema
+
+
+def risposta_gruppo(testo_integrale: bool = True) -> dict[str, Any]:
+    """Lo schema della risposta a un gruppo di pagine: un array di pagine.
+
+    Ogni oggetto porta anche ``file``, che non e' un dato dell'atto ma il
+    filo che riporta la risposta alla sua pagina: senza, l'allineamento
+    resta affidato all'ordine, e un modello che salta una pagina bianca
+    disallinea in silenzio tutte quelle che seguono.
+    """
+    voce = copy.deepcopy(schema_pagina(testo_integrale))
+    voce["properties"] = {
+        "file": {
+            "type": "string",
+            "description": "il nome del file della pagina, come indicato nell'istruzione",
+        },
+        **voce["properties"],
+    }
+    voce["required"] = ["file", *voce["required"]]
+    return {"type": "array", "items": voce}

@@ -127,8 +127,11 @@ class Glossario:
 
         for errata in sorted(mappa, key=len, reverse=True):
             giusta = mappa[errata]
-            if _chiave(giusta) == _chiave(errata):
-                continue  # gia' nella forma corretta: niente da fare
+            if giusta == errata:
+                continue  # identica: niente da fare
+            # Il confronto NON puo' avvenire sulle chiavi normalizzate:
+            # 'Porta murella' e 'Porta Murella' hanno la stessa chiave, e
+            # scartarle lascerebbe per sempre la minuscola dov'era.
             # re.escape non escapa gli spazi dal Python 3.7, quindi la
             # sostituzione va fatta sul letterale, non sulla sua fuga.
             schema = re.compile(
@@ -136,7 +139,11 @@ class Glossario:
                 re.IGNORECASE,
             )
             nuovo, quanti = schema.subn(giusta, corretto)
-            if quanti:
+            # 'quanti' conta i riscontri, non i cambiamenti: la regex e'
+            # insensibile alle maiuscole, quindi riconosce anche la forma
+            # gia' corretta. Segnalare quella come correzione gonfierebbe
+            # il rendiconto di sostituzioni che non hanno cambiato nulla.
+            if quanti and nuovo != corretto:
                 applicate.append(Correzione(letto=errata, corretto=giusta, campo=campo))
                 corretto = nuovo
 

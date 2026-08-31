@@ -14,7 +14,7 @@ from PIL import Image
 
 from history_maker import claudecode, transcribe
 from history_maker.catalogo import Catalogo, Registro
-from history_maker.config import Config
+from history_maker.config import Config, Trascrizione
 
 
 @pytest.fixture
@@ -32,6 +32,17 @@ def config(tmp_path) -> Config:
         ridotte=tmp_path / "ridotte",
         trascrizioni=tmp_path / "trascrizioni",
         dataset=tmp_path / "dataset",
+        # Il backend va fissato: il default del progetto e' Gemini, e
+        # questi test collaudano la strada di Claude Code.
+        trascrizione=Trascrizione(
+            backend="claude-code",
+            modello="claude-opus-5",
+            pagine_per_chiamata=4,
+            # Un'immagine per pagina: questi test collaudano la riduzione e
+            # il raggruppamento, non la divisione delle facciate, che ha i
+            # suoi in test_facciate.py.
+            dividi_facciate=False,
+        ),
     )
 
 

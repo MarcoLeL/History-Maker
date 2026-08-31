@@ -67,31 +67,64 @@ sovrascrive le correzioni.
 rinominato solo a scaricamento finito, così un Ctrl-C non lascia file
 troncati che al rilancio sembrerebbero completi.
 
-**La trascrizione passa da Claude Code, non dall'API.** L'abbonamento
-Claude Pro non include credito API: `claude -p` usa la quota
-dell'abbonamento. Le opzioni della chiamata non sono decorative —
-`--system-prompt` sostituisce il prompt da agente di programmazione con
-quello paleografico, `--allowedTools Read` e `--restricted` riducono la
-CLI a ciò che serve, `--permission-mode dontAsk` evita che si fermi ad
-attendere un consenso che in un ciclo di migliaia di pagine nessuno
-darebbe.
+**Chi trascrive sta dietro un'interfaccia.** `backend.py` separa *cosa* si
+chiede a un modello da *chi* glielo chiede: un backend riceve una
+`Richiesta` — prompt di sistema, istruzione, immagini nell'ordine in cui
+l'istruzione le nomina — e restituisce una `Risposta`. `transcribe.py`
+non sa quale motore stia girando. I due che esistono differiscono su tre
+punti, e sono i tre che l'interfaccia lascia decidere a loro: come
+arrivano le immagini (dal disco con `Read`, o allegate alla richiesta),
+se lo schema si può imporre, e come finisce la quota.
 
-**Le pagine vanno a gruppi.** Misurato su invocazioni reali: il
-sovraccarico di Claude Code è ~50.000 token per *chiamata*, contro ~2.500
-per immagine. A una pagina per chiamata il 95% della quota se ne
-andrebbe in impalcatura; a quattro pagine il costo scende a ~20.000 token
-a pagina. È la ragione per cui `transcribe` non è un semplice ciclo.
+**Il default è Gemini sul piano gratuito, e la ragione è il ritmo.** Con
+Claude Code il sovraccarico è ~50.000 token per *chiamata* — prompt di
+sistema e definizioni degli strumenti — contro ~2.100 per immagine: a
+dieci pagine per chiamata i sette decimi della quota se ne vanno in
+impalcatura, e la quota dell'abbonamento si rinnova a finestre di ore.
+Misurato: circa un anno di atti per finestra, cioè mesi per un secolo.
+Con Gemini quel sovraccarico non esiste e il piano gratuito dà 250
+richieste al giorno, cioè ~1.500 pagine.
 
-**La risposta va validata.** L'API offre `output_config.format` e
-garantisce la conformità; la CLI no. Il testo torna quasi sempre dentro un
-blocco markdown (verificato), quindi `claudecode.estrai_json` lo ripulisce
-cercando il primo valore JSON bilanciato, e `schema.valida_pagina`
-normalizza la struttura. Un gruppo che non si lascia interpretare viene
-ritentato una pagina per volta, per isolare quella problematica.
+**Le pagine vanno a gruppi comunque, ma per ragioni opposte.** Con Claude
+Code per ammortizzare l'impalcatura; con Gemini perché il piano gratuito
+conta le *richieste al giorno*, e il numero di pagine per chiamata è
+letteralmente il numero di pagine al giorno. Il tetto è il limite di
+token al minuto. È la ragione per cui `transcribe` non è un semplice
+ciclo.
+
+**La risoluzione è il tetto della qualità, e si decide prima del
+modello.** Una scansione è una doppia pagina orizzontale ~3700×2300:
+ridotta intera a 1568 px di lato lungo, ogni facciata arriva al modello
+con 784 px di larghezza. `prepara_immagini` la divide in due facciate
+verticali con un dito di sovrapposizione — la larghezza utile sale a
+~1150 px — e il prompt dice al modello che sono una pagina sola.
+Ritagliare la sola metà scritta non si può: su questi registri una doppia
+pagina porta spesso un atto per lato, e `ritaglio.lato_scritto`
+restituisce `None` apposta.
+
+**La risposta va validata comunque.** Gemini accetta un `responseSchema`
+e la conformità è per costruzione; Claude Code no, e il testo torna quasi
+sempre dentro un blocco markdown (verificato). `backend.estrai_json` lo
+ripulisce cercando il primo valore JSON bilanciato, e
+`schema.valida_pagina` normalizza la struttura: un vincolo di forma non è
+un vincolo di senso, e tenerlo costa zero. Un gruppo che non si lascia
+interpretare viene ritentato una pagina per volta, per isolare quella
+problematica.
 
 **L'esaurimento della quota non è un errore.** Va distinto da una pagina
 illeggibile: `LimiteUsoRaggiunto` interrompe il ciclo, e poiché ogni
-pagina finita è già su disco, rilanciare riprende esattamente da lì.
+pagina finita è già su disco, rilanciare riprende esattamente da lì. Va
+distinto anche da un limite di *ritmo*, che dura qualche decina di
+secondi e viene semplicemente atteso: il servizio dice lui quanto
+(`retryDelay`), e fermare per questo un lavoro di migliaia di pagine
+sarebbe assurdo.
+
+**Il confronto sostituisce la fiducia.** `confronto.py` mette due letture
+delle stesse pagine una accanto all'altra e conta dove divergono,
+distinguendo lo scambio plausibile per la mano ottocentesca dalla lettura
+proprio diversa. Non dice chi ha ragione — per quello serve la carta — ma
+è il modo di decidere se cambiare motore, alzare la risoluzione o
+aggiungere una voce al glossario abbia davvero cambiato qualcosa.
 
 ## Cosa non è stato verificato
 
@@ -117,19 +150,30 @@ challenge a mano nella finestra una volta sola.
 
 ## Consumo indicativo
 
-Misurato su invocazioni reali di `claude -p` con immagini a 1568 px:
+Nessuno dei due motori si misura in euro, ma si misurano in cose diverse.
+
+**Claude Code**, misurato su invocazioni reali con immagini a 1568 px:
 
 | | token di contesto |
 |---|---|
 | una pagina per chiamata | ~50.000 a pagina |
-| quattro pagine per chiamata | ~20.000 a pagina |
-| *(per confronto: API diretta)* | *~2.500 a pagina* |
+| dieci pagine per chiamata | ~7.000 a pagina |
+| *di cui impalcatura* | *~5.000 a pagina* |
 
-`transcribe --stima` fa il conto sulle pagine effettivamente presenti.
-Non ci sono euro da stimare: il vincolo è la quota dell'abbonamento, che
-si rinnova a finestre. Su migliaia di pagine il lavoro si fermerà più
-volte — `--attendi` lo lascia proseguire da solo.
+**Gemini**, sul piano gratuito del `flash` corrente:
 
-Se la quota si esaurisce troppo in fretta, `claude-sonnet-5` in
-`config/torrebruna.yaml` consuma molto meno di Opus e su una scrittura
-leggibile regge bene.
+| | |
+|---|---|
+| richieste al giorno | 250 |
+| pagine per richiesta | 6 (con le facciate divise) |
+| **pagine al giorno** | **1.500** |
+| token per pagina | ~3.100 in ingresso, ~1.500 in uscita |
+
+Misurato sulle prime 86 pagine: ~1.540 token prodotti a pagina, di cui un
+terzo è `testo_integrale`. Spegnerlo (`testo_integrale: false`) serve a
+chi punta all'albero genealogico e non alla ricerca storica, e fa entrare
+più pagine in ogni chiamata.
+
+`transcribe --stima` fa il conto sulle pagine effettivamente presenti e
+dice anche quante richieste restano oggi. Su migliaia di pagine il lavoro
+si fermerà più volte — `--attendi` lo lascia proseguire da solo.
