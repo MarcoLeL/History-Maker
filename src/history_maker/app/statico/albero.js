@@ -727,6 +727,7 @@ function mostraScheda(dati) {
 
   const titolo = document.createElement('h2');
   titolo.textContent = nomeDi(p);
+  titolo.appendChild(badgeConfidenza(dati.evidenza));
   pannello.appendChild(titolo);
 
   const sotto = document.createElement('p');
@@ -767,7 +768,128 @@ function mostraScheda(dati) {
   aggiungiParenti(pannello, 'Fratelli e sorelle', dati.fratelli, (f) =>
     f.pieno ? '' : 'un solo genitore in comune');
 
+  aggiungiEvidenza(pannello, dati.evidenza);
   aggiungiAtti(pannello, dati);
+}
+
+// --- l'evidenza: perche' l'archivio crede questo, e quanto ci crede -------
+//
+// Il resto della scheda mostra un valore. Questa sezione mostra cio' su
+// cui il valore si regge: e' la differenza fra un'anagrafe e un archivio
+// ricostruito, e senza di lei chi consulta non ha modo di sapere se un
+// nome e' confermato o soltanto un'ipotesi.
+
+const ETICHETTA_STATO = {
+  confermato: 'confermato', probabile: 'probabile',
+  possibile: 'possibile', irrisolto: 'da verificare',
+};
+
+function badgeConfidenza(evidenza) {
+  const span = document.createElement('span');
+  if (!evidenza || evidenza.confidenza == null) {
+    span.className = 'confidenza stato-irrisolto';
+    span.innerHTML = '<span class="puntino"></span><span>senza dati</span>';
+    return span;
+  }
+  const stato = evidenza.stato || 'irrisolto';
+  span.className = `confidenza stato-${stato}`;
+  const percento = Math.round(evidenza.confidenza * 100);
+  span.innerHTML = `<span class="puntino"></span>`
+    + `<span>${ETICHETTA_STATO[stato] || stato} · ${percento}%</span>`;
+  span.title = 'Quanto l’archivio crede a questa identità, e su che base '
+    + '(vedi “Su cosa si regge” più sotto).';
+  return span;
+}
+
+const GRAVITA_ETICHETTA = { alta: 'grave', media: 'da guardare', bassa: 'minore' };
+
+function aggiungiEvidenza(pannello, evidenza) {
+  if (!evidenza) return;
+
+  // Le letture scartate: il grezzo non si perde mai, e chi dubita del
+  // nome scelto deve poter vedere cos'altro dicevano gli atti.
+  const scartate = [
+    ...(evidenza.letture_scartate_del_nome || []),
+    ...(evidenza.letture_scartate_del_cognome || []),
+  ];
+  if (scartate.length) {
+    const h = document.createElement('h3');
+    h.textContent = 'Altre grafie lette';
+    pannello.appendChild(h);
+    const p = document.createElement('p');
+    p.className = 'vuoto-nota';
+    p.textContent = scartate.join(', ');
+    pannello.appendChild(p);
+  }
+
+  const dubbi = evidenza.anomalie_aperte || [];
+  const div = document.createElement('div');
+  div.className = 'dubbi';
+  const h = document.createElement('h3');
+  h.textContent = 'Dubbi ancora aperti';
+  if (dubbi.length) {
+    const conta = document.createElement('span');
+    conta.className = 'quanti';
+    conta.textContent = dubbi.length;
+    h.appendChild(conta);
+  }
+  div.appendChild(h);
+
+  if (!dubbi.length) {
+    const vuoto = document.createElement('p');
+    vuoto.className = 'vuoto-nota';
+    vuoto.textContent = 'Nessuno, al momento di questa ricostruzione.';
+    div.appendChild(vuoto);
+  } else {
+    for (const d of dubbi) {
+      const blocco = document.createElement('div');
+      blocco.className = 'dubbio';
+      const riga1 = document.createElement('div');
+      riga1.className = 'riga-1';
+      const gravita = document.createElement('span');
+      if (d.gravita === 'alta') gravita.className = 'gravita-alta';
+      gravita.textContent = GRAVITA_ETICHETTA[d.gravita] || d.gravita || '';
+      const confidenza = document.createElement('span');
+      confidenza.textContent = d.confidenza != null
+        ? Math.round(d.confidenza * 100) + '% di certezza' : '';
+      riga1.append(gravita, confidenza);
+      const desc = document.createElement('div');
+      desc.className = 'descrizione';
+      desc.textContent = d.descrizione;
+      blocco.append(riga1, desc);
+      div.appendChild(blocco);
+    }
+  }
+  pannello.appendChild(div);
+
+  const storia = evidenza.decisioni || [];
+  if (storia.length) {
+    const h2 = document.createElement('h3');
+    h2.textContent = `Decisioni prese su questa persona (${storia.length})`;
+    pannello.appendChild(h2);
+    const lista = document.createElement('ul');
+    lista.className = 'storia';
+    for (const dec of storia) {
+      const li = document.createElement('li');
+      if (dec.disfa) li.classList.add('superata');
+      const riga1 = document.createElement('div');
+      riga1.className = 'riga-1';
+      const azione = document.createElement('span');
+      azione.className = `azione azione-${dec.azione}`;
+      azione.textContent = dec.azione;
+      const decisore = document.createElement('span');
+      decisore.className = 'decisore';
+      decisore.textContent = dec.decisore
+        + (dec.modello ? ` (${dec.modello})` : '') + ' · ' + (dec.quando || '').slice(0, 10);
+      riga1.append(azione, decisore);
+      const motivo = document.createElement('div');
+      motivo.className = 'motivo';
+      motivo.textContent = dec.motivo || '';
+      li.append(riga1, motivo);
+      lista.appendChild(li);
+    }
+    pannello.appendChild(lista);
+  }
 }
 
 function sezioneFatti(p) {

@@ -13,6 +13,7 @@ archivio di cui nessuno sa piu' da dove venga cosa.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -314,7 +315,117 @@ def scheda(conn: sqlite3.Connection, individuo: int) -> dict | None:
              "persone": compagni_di_atto(conn, atto["atto"], individuo)}
             for atto in atti
         ],
+        # Le evidenze: non un valore, ma cio' su cui il valore si regge.
+        # Sono le colonne che la fase 6b ha aggiunto proprio a 'individui'
+        # — confidenza, stato, prove — e che fino a qui nessuna vista
+        # dell'applicazione leggeva mai. Senza, chi consulta l'albero vede
+        # un nome e non ha modo di sapere se e' confermato o soltanto
+        # possibile, su quali atti si regge, o che su quella persona pende
+        # un dubbio in coda.
+        "evidenza": evidenza(conn, individuo),
     }
+
+
+def evidenza(conn: sqlite3.Connection, individuo: int) -> dict:
+    """Perche' l'archivio crede questo, e quanto ci crede.
+
+    Quattro cose, e sono le quattro che una scheda-vista non puo' dare da
+    sola: quanto e' sicura l'identita' (``confidenza``, ``stato``), su
+    cosa si regge (``prove``), quali altre letture del nome/cognome sono
+    state scartate, e quali dubbi sono ancora aperti su questa persona.
+    """
+    riga = conn.execute(
+        "SELECT confidenza, stato, prove, fondata_su, varianti_nome, "
+        "varianti_cognome FROM individui WHERE id = ?", (individuo,)
+    ).fetchone()
+    if riga is None:
+        return {}
+    return {
+        "confidenza": riga["confidenza"],
+        "stato": riga["stato"],
+        "su_cosa_si_regge": riga["fondata_su"],
+        "prove": riga["prove"],
+        "letture_scartate_del_nome": _varianti(riga["varianti_nome"]),
+        "letture_scartate_del_cognome": _varianti(riga["varianti_cognome"]),
+        "anomalie_aperte": anomalie(conn, individuo),
+        "decisioni": decisioni(conn, individuo),
+    }
+
+
+def _varianti(campo: str | None) -> list[str]:
+    """Le grafie lette, oltre a quella scelta come migliore."""
+    if not campo:
+        return []
+    return [pezzo.strip() for pezzo in campo.split("|") if pezzo.strip()]
+
+
+# Quante anomalie e decisioni mostrare per persona. Non e' un tetto sulla
+# finestra dei dati — quelle tabelle restano interrogabili per intero —
+# e' un tetto su cosa e' utile mostrare in una scheda: il sindaco ha
+# duecento decisioni che lo riguardano, e una scheda che le elenca tutte
+# smette di essere leggibile.
+EVIDENZE_MASSIME = 20
+
+
+def anomalie(conn: sqlite3.Connection, individuo: int) -> list[dict]:
+    """I dubbi ancora aperti che nominano questa persona, in ordine di priorita'."""
+    try:
+        righe = conn.execute(
+            "SELECT id, tipo, individui, campo, descrizione, confidenza, "
+            "impatto, gravita, priorita, stato FROM anomalie "
+            "WHERE stato = 'aperta' AND individui LIKE ? "
+            "ORDER BY priorita DESC LIMIT 200",
+            (f"%{individuo}%",),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    # 'LIKE' sul JSON e' un filtro largo (individuo 5 combacia anche
+    # dentro '[15, 25]'): si restringe leggendo il campo per davvero,
+    # sulle righe gia' filtrate invece che con una query per riga.
+    fuori = []
+    for riga in righe:
+        try:
+            if individuo not in json.loads(riga["individui"]):
+                continue
+        except (TypeError, ValueError):
+            continue
+        voce = _dizionario(riga)
+        del voce["individui"]
+        fuori.append(voce)
+        if len(fuori) >= EVIDENZE_MASSIME:
+            break
+    return fuori
+
+
+def decisioni(conn: sqlite3.Connection, individuo: int) -> list[dict]:
+    """La storia di cosa e' stato deciso su questa persona, in ordine di tempo.
+
+    E' la risposta a 'perche' l'archivio dice questo?' — chi ha deciso,
+    quando, con quale confidenza, e se una decisione successiva l'ha
+    superata.
+    """
+    try:
+        righe = conn.execute(
+            "SELECT id, quando, azione, entita, motivo, confidenza, "
+            "decisore, modello, disfa FROM decisioni WHERE entita LIKE ? "
+            "ORDER BY id DESC LIMIT 500",
+            (f"%{individuo}%",),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    fuori = []
+    for riga in righe:
+        try:
+            if individuo not in json.loads(riga["entita"]):
+                continue
+        except (TypeError, ValueError):
+            continue
+        voce = _dizionario(riga)
+        del voce["entita"]
+        fuori.append(voce)
+        if len(fuori) >= EVIDENZE_MASSIME:
+            break
+    return fuori
 
 
 # --- l'albero ---------------------------------------------------------------

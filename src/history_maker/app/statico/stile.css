@@ -366,6 +366,68 @@ details.atto .compagni .spento { color: var(--inchiostro-lieve); }
   margin: .5rem 0;
 }
 
+/* --- l'evidenza: perche' l'archivio crede questo ------------------------ */
+/*
+ * Il valore mostrato in "Quel che si sa" e' una vista derivata, non il
+ * database: sotto c'e' una confidenza, delle letture scartate e magari
+ * un dubbio ancora aperto. Questa sezione li rende visibili senza
+ * costringere chi guarda a fidarsi in bianco.
+ */
+
+.confidenza {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .74rem; padding: .12rem .5rem; border-radius: 999px;
+  border: 1px solid var(--riga-forte); margin-left: .5rem;
+  vertical-align: middle;
+}
+.confidenza .puntino {
+  width: .5rem; height: .5rem; border-radius: 50%; flex: none;
+}
+.confidenza.stato-confermato .puntino { background: #4d8f5b; }
+.confidenza.stato-probabile  .puntino { background: #b08a2e; }
+.confidenza.stato-possibile  .puntino { background: var(--accento); }
+.confidenza.stato-irrisolto  .puntino { background: var(--donna); }
+
+.dubbi h3 { display: flex; align-items: center; gap: .4rem; }
+.dubbi .quanti {
+  font-size: .7rem; color: var(--carta-alta); background: var(--donna);
+  padding: .04rem .4rem; border-radius: 999px;
+}
+
+.dubbio {
+  border-left: 2px solid var(--donna);
+  background: var(--carta);
+  padding: .4rem .55rem;
+  margin-bottom: .35rem;
+  font-size: .8rem;
+}
+.dubbio .riga-1 {
+  display: flex; justify-content: space-between; gap: .5rem;
+  font-size: .7rem; color: var(--inchiostro-lieve);
+  text-transform: uppercase; letter-spacing: .03em; margin-bottom: .15rem;
+}
+.dubbio .gravita-alta { color: var(--donna); font-weight: 700; }
+.dubbio .descrizione { line-height: 1.4; }
+
+.storia { list-style: none; margin: 0; padding: 0; font-size: .78rem; }
+.storia li {
+  padding: .3rem 0; border-bottom: 1px solid var(--riga);
+  display: flex; flex-direction: column; gap: .1rem;
+}
+.storia li:last-child { border-bottom: 0; }
+.storia .riga-1 { display: flex; gap: .4rem; align-items: baseline; }
+.storia .azione {
+  font-size: .68rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--carta-alta); background: var(--inchiostro-lieve);
+  padding: .04rem .32rem; border-radius: 3px;
+}
+.storia .azione.azione-unione { background: var(--uomo); }
+.storia .azione.azione-separazione { background: var(--donna); }
+.storia .azione.azione-correzione { background: var(--accento); }
+.storia .decisore { color: var(--inchiostro-lieve); }
+.storia .motivo { color: var(--inchiostro); }
+.storia .superata { text-decoration: line-through; opacity: .55; }
+
 /* --- la lente sull'immagine --------------------------------------------- */
 
 .lente {
