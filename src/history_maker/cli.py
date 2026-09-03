@@ -123,6 +123,21 @@ def _parser() -> argparse.ArgumentParser:
                    help="mostra le domande che farebbe e si ferma")
 
     p = sotto.add_parser(
+        "rileggi",
+        help="fase 6f: rilegge la pagina intera con il contesto genealogico accanto",
+    )
+    p.add_argument("--quante", type=int, default=20,
+                   help="quante pagine rileggere al massimo")
+    p.add_argument("--atto", type=int, default=None,
+                   help="una pagina precisa, invece di quelle in coda")
+    p.add_argument("--elenca", action="store_true",
+                   help="mostra i contesti che manderebbe e si ferma "
+                        "(non consuma quota)")
+    p.add_argument("--contesto", action="store_true",
+                   help="con --elenca, stampa il contesto per intero invece "
+                        "del riassunto")
+
+    p = sotto.add_parser(
         "arbitra",
         help="fase 6e: sottopone a un modello i casi che il calcolo non decide",
     )
@@ -454,6 +469,65 @@ def main(argv: list[str] | None = None) -> int:
             f"Vale dalla prossima ricostruzione: "
             f"python -m history_maker ricostruisci"
         )
+        return 0
+
+    if args.comando == "rileggi":
+        import json
+        import sqlite3
+
+        from history_maker.ricostruzione import rilettura
+
+        percorso = config.dataset / "torrebruna.sqlite"
+        if not percorso.exists():
+            print(f"Manca {percorso}. Prima: python -m history_maker ricostruisci",
+                  file=sys.stderr)
+            return 2
+
+        # A differenza di 'verifica' e 'arbitra', qui il grafo non si
+        # ricostruisce in memoria: il contesto di un atto si legge dalle
+        # tabelle. Due minuti e mezzo di attesa per una domanda su una
+        # pagina sarebbero il motivo per cui la domanda non si fa.
+        conn = sqlite3.connect(percorso)
+        conn.row_factory = sqlite3.Row
+        atti = [args.atto] if args.atto else rilettura.casi(conn, args.quante)
+        dossier = rilettura.prepara(conn, atti, config.immagini)
+
+        if args.elenca or not dossier:
+            for dato in dossier:
+                if args.contesto:
+                    print(json.dumps(
+                        {k: v for k, v in dato.items() if not k.startswith("_")},
+                        ensure_ascii=False, indent=1,
+                    ))
+                    continue
+                atto = dato["atto"]
+                print(f"atto {atto['id']}: {atto['tipo']} n. {atto['numero']} "
+                      f"del {atto['anno']} — {atto['immagine']}")
+                for domanda in dato["domande_aperte"]:
+                    print(f"    ? {domanda}")
+                for errore in dato["possible_errors"][:3]:
+                    print(f"    · {errore['codice']} ({errore['confidenza']:.2f}) "
+                          f"{errore['descrizione'][:90]}")
+            print(f"\n{len(dossier)} pagine da rileggere. "
+                  f"Senza --elenca consumano quota.")
+            conn.close()
+            return 0
+
+        esiti = rilettura.esegui(config, conn, dossier)
+        conn.commit()
+        conn.close()
+        print(
+            f"Pagine rilette: {esiti['fatte']}, riusate dalla cache: "
+            f"{esiti['riusate']}, fallite: {esiti['fallite']}.\n"
+            f"Correzioni registrate: {esiti['correzioni']}, "
+            f"conflitti col contesto: {esiti['conflitti_col_contesto']}."
+        )
+        if esiti["correzioni"]:
+            print("Valgono dalla prossima ricostruzione: "
+                  "python -m history_maker ricostruisci")
+        if esiti["quota_esaurita"]:
+            print("\nLa quota si e' esaurita. Quello che e' fatto e' salvato:\n"
+                  "  rilancia lo stesso comando piu' tardi per riprendere.")
         return 0
 
     if args.comando in ("verifica", "arbitra"):

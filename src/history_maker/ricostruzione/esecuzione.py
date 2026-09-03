@@ -390,7 +390,9 @@ def _scrivi_legami(
                 campo=tipo,
                 descrizione=(
                     f"gli atti danno a {_etichetta(esito, per_chiave, figlio)} due "
-                    f"{tipo}i: {_etichetta(esito, per_chiave, genitore)} (atto "
+                    # 'padre' e 'madre' fanno 'padri' e 'madri', non
+                    # 'padrei': la 'e' finale se ne va.
+                    f"{tipo[:-1]}i: {_etichetta(esito, per_chiave, genitore)} (atto "
                     f"{atto}) e {_etichetta(esito, per_chiave, perdente)} (atto "
                     f"{atto_perdente}); l'albero tiene il primo"
                 ),

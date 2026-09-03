@@ -498,6 +498,14 @@ DROP TABLE IF EXISTS main.unioni;
 DROP TABLE IF EXISTS main.individui_fts;
 DROP TABLE IF EXISTS main.fatti;
 DROP TABLE IF EXISTS main.anomalie;
+-- 'scartati' non e' di questa fase: la produce 'coerenza', che appartiene
+-- all'altro motore. Sta qui perche' i due hanno condiviso il database
+-- prima che ognuno avesse il suo, e cio' che ne resta punta a individui
+-- rinumerati da allora: righe che nessuna interrogazione puo' leggere
+-- giuste, e che fanno credere a chi guarda che questa fase cancelli le
+-- conclusioni assurde. Non le cancella: le lascia in coda con la domanda
+-- gia' pronta per l'immagine.
+DROP TABLE IF EXISTS main.scartati;
 
 CREATE TABLE individui (
     id              INTEGER PRIMARY KEY,

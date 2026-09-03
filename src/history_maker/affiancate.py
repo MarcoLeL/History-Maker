@@ -252,10 +252,27 @@ def confronta(config: Config, esempi: int = 0) -> str:
             "conteggi": qualita.conteggi(esiti),
             "controlli": {e.controllo.nome: e.quanti for e in esiti},
             "categoria": {e.controllo.nome: e.controllo.categoria for e in esiti},
+            "cancellate": _cancellate(conn),
         }
         conn.close()
 
     return _rapporto(misure, esempi)
+
+
+def _cancellate(conn: sqlite3.Connection) -> int:
+    """Quante conclusioni il motore ha **tolto** perche' impossibili.
+
+    Serve a leggere lo zero della V1 per quello che e'. Quella fase
+    finisce con una passata di correzione che cancella le conclusioni
+    assurde invece di segnalarle, quindi il suo 'zero impossibili' non e'
+    un albero senza contraddizioni: e' un albero a cui le contraddizioni
+    sono state tolte. Le due colonne non misurano la stessa cosa, e senza
+    questo numero il confronto direbbe una bugia.
+    """
+    try:
+        return conn.execute("SELECT COUNT(*) FROM scartati").fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0
 
 
 def _scarto(prima: int, dopo: int) -> str:
@@ -309,6 +326,32 @@ def _rapporto(misure: dict[str, dict], esempi: int) -> str:
         f"| **totale** | **{somma_v1}** | **{somma_v2}** | "
         f"**{_scarto(somma_v1, somma_v2)}** |"
     )
+
+    # Senza questa nota la riga 'impossibile' e' una bugia per omissione.
+    if v1["cancellate"] or v2["cancellate"]:
+        righe += ["", "Da sapere per leggere la riga **impossibile**:", ""]
+        for motore, misura in (("V1", v1), ("V2", v2)):
+            if misura["cancellate"]:
+                righe.append(
+                    f"* la {motore} **cancella** le conclusioni che rendono "
+                    f"l'albero impossibile invece di segnalarle: "
+                    f"{misura['cancellate']} righe tolte, in tabella `scartati`. "
+                    f"Il suo conteggio e' quello che resta **dopo** quella "
+                    f"passata, non quello che la ricostruzione ha prodotto."
+                )
+            else:
+                righe.append(
+                    f"* la {motore} non cancella niente: i suoi "
+                    f"{misura['conteggi'].get('impossibile', 0)} casi sono in "
+                    f"coda con la domanda gia' pronta per l'immagine."
+                )
+        righe.append(
+            ""
+        )
+        righe.append(
+            "Le due colonne quindi **non misurano la stessa cosa**, e la "
+            "somma va letta sapendolo."
+        )
 
     righe += [
         "",
