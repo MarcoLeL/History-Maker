@@ -88,6 +88,7 @@ class Giro:
     schede_prima: int
     schede_dopo: int
     correzioni_lettura: int = 0
+    pagine_esaminate: int = 0
     conflitti_col_contesto: int = 0
     pagine_fallite: int = 0
     quota_lettura_esaurita: bool = False
@@ -102,8 +103,31 @@ class Giro:
 
     @property
     def produttivo(self) -> bool:
-        """Se questo giro ha cambiato qualcosa nell'archivio."""
-        return self.correzioni_lettura > 0 or self.decisioni_arbitro > 0
+        """Se questo giro ha fatto avanzare la coda.
+
+        Non e' 'ha cambiato l'archivio': un giro che rilegge venti pagine
+        tutte CONFERMATO, o che sottopone venti casi e li vede tornare
+        come 'conferma' — un ragionamento scritto, nessuna fusione
+        applicata — sta comunque avanzando, perche' quelle pagine e quei
+        casi non verranno richiesti una seconda volta (vedi
+        ``rilettura.casi`` e ``arbitro.gia_arbitrati``). Fermarsi li'
+        vorrebbe dire smettere di guardare la coda proprio mentre la si
+        sta ancora scoprendo: la scheda piu' grossa dell'archivio puo'
+        benissimo stare alla posizione venticinque, non alla prima.
+
+        Solo pagine e casi **nuovi** contano: se questo giro non ne ha
+        trovati — non 'sono tornati senza cambiare niente', ma 'non ce
+        n'erano' — allora si e' davvero arrivati in fondo alla coda con i
+        criteri di oggi, ed e' li' che vale la pena fermarsi.
+        """
+        # 'pagine_esaminate' comprende gia' le pagine corrette — vedi
+        # 'rilettura.esegui', che le conta insieme in 'fatte' — quindi
+        # controllarle entrambe sarebbe ridondante.
+        return (
+            self.pagine_esaminate > 0
+            or self.pagine_fallite > 0
+            or self.casi_sottoposti > 0
+        )
 
     @property
     def fermo_per_quota(self) -> bool:
@@ -198,6 +222,7 @@ def esegui(
             esiti = rilettura.esegui(config, conn, dossier, tetto=len(dossier))
             conn.commit()
             giro.correzioni_lettura = esiti["correzioni"]
+            giro.pagine_esaminate = esiti["fatte"]
             giro.conflitti_col_contesto = esiti["conflitti_col_contesto"]
             giro.pagine_fallite = esiti["fallite"]
             giro.quota_lettura_esaurita = esiti["quota_esaurita"]
