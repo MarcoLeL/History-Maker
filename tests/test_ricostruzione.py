@@ -21,7 +21,8 @@ import pytest
 
 from history_maker.dataset import SCHEMA_SQL
 from history_maker.ricostruzione import (
-    anomalie, attributi, candidati, evidenza, lettura, modello, risoluzione,
+    anomalie, attributi, candidati, esecuzione, evidenza, lettura, modello,
+    risoluzione,
 )
 from history_maker.ricostruzione.scheda import Scheda, principali
 
@@ -787,6 +788,190 @@ class TestIdentita:
                 if fatto.tipo == "professione":
                     mestieri.add((fatto.anno, fatto.valore.grezzo))
         assert mestieri == {(1850, "bovaro"), (1875, "contadino")}
+
+    def test_il_nome_composto_si_riconosce_da_qualunque_pezzo_sopravviva(self):
+        """Non solo quando cade il secondo pezzo: anche quando cade il primo.
+
+        'test_il_secondo_nome_che_compare_e_scompare' prova gia' il verso
+        che serve alla generazione dei candidati per coppia
+        (``candidati._prima_parte`` ancora sul primo elemento). Qui cade
+        il **primo**: 'Anna Maria' diventa 'Maria' nel secondo atto. Se il
+        riconoscimento dipendesse da quella scorciatoia, questo caso
+        fallirebbe; se regge, e' perche' 'nomi.somiglianza_nome' confronta
+        pezzo per pezzo senza guardare la posizione — ed e' il pezzo di
+        codice che rende vero l'uno e l'altro verso.
+        """
+        esito, prima = in_un_paese([
+            nascita(1840, ("Anna", "Cicchillitti"), ("Giuseppe", "Cicchillitti"),
+                    ("Anna Maria", "Petta"), dati_madre={"eta": "trenta"}),
+            nascita(1843, ("Rosa", "Cicchillitti"), ("Giuseppe", "Cicchillitti"),
+                    ("Maria", "Petta"), dati_madre={"eta": "trentatre"}),
+        ])
+        madri = schede_di_prova(esito, prima, ruolo="madre")
+        assert len(madri) == 1, "'Anna Maria' e 'Maria' restano la stessa madre"
+
+    def test_un_domicilio_diverso_non_e_un_veto(self):
+        """Ci si trasferisce dentro il paese: da solo non separa.
+
+        E' lo stesso principio del cognome del tutto diverso, applicato
+        alla contrada invece che al cognome — e con la stessa prova a
+        favore che deve prevalere: la moglie in comune.
+        """
+        esito, prima = in_un_paese([
+            nascita(1850, ("Anna", "Marianacci"), ("Vincenzo", "Marianacci"),
+                    ("Rosa", "Petta"), dati_padre={"via": "Contrada Sant'Antonio"}),
+            nascita(1853, ("Luigi", "Marianacci"), ("Vincenzo", "Marianacci"),
+                    ("Rosa", "Petta"), dati_padre={"via": "Contrada San Rocco"}),
+        ])
+        padri = schede_di_prova(esito, prima, ruolo="padre")
+        assert len(padri) == 1, "una contrada diversa non e' un uomo diverso"
+
+    def test_il_genitore_meglio_documentato_vince_il_conflitto(self):
+        """Un figlio ha un padre solo: quando gli atti ne dichiarano due,
+        vince quello scritto nell'atto di nascita del figlio stesso, e
+        l'altro diventa un'anomalia — non sparisce, si segnala.
+
+        E' il caso della relazione sbagliata: un atto di morte tardivo,
+        scritto a memoria da un dichiarante che non e' il padre, puo'
+        nominare un genitore diverso da quello vero. La prova migliore —
+        scritta il giorno stesso, da chi il bambino l'ha portato in
+        municipio — deve prevalere su quella scritta decenni dopo.
+        """
+        corpus = corpus_da(sfondo() + [
+            nascita(1850, ("Domenico", "Lella"), ("Filippo", "Lella"),
+                    ("Teresa", "Rossi")),
+            {"tipo": "morte", "anno": 1900, "persone": [
+                {"ruolo": "defunto", "nome": "Domenico", "cognome": "Lella",
+                 "eta": "cinquanta"},
+                # Un padre sbagliato: nome e cognome del tutto diversi da
+                # Filippo Lella, cosi' le due schede non si confondono.
+                {"ruolo": "padre", "nome": "Salvatore", "cognome": "Bellucci"},
+                {"ruolo": "dichiarante", "nome": "Nicola", "cognome": "Colella"},
+            ]},
+        ])
+        esito = risoluzione.ricostruisci(corpus)
+        esito.anomalie.extend(anomalie.tutte(esito))
+
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(modello.SCHEMA_SQL)
+        numeri = esecuzione._scrivi_individui(conn, esito)
+        prima_delle_anomalie = len(esito.anomalie)
+        legami, scartati = esecuzione._scrivi_legami(conn, esito, numeri)
+
+        domenico = [
+            s for s in esito.schede.values()
+            if "Domenico" in s.nomi and "Lella" in s.cognomi
+        ]
+        assert len(domenico) == 1
+        vero_padre = numeri[[
+            s.chiave for s in esito.schede.values() if "Filippo" in s.nomi
+        ][0]]
+        riga = conn.execute(
+            "SELECT genitore FROM legami WHERE figlio = ? AND tipo = 'padre'",
+            (numeri[domenico[0].chiave],),
+        ).fetchone()
+        assert riga is not None, "il padre vero deve restare scritto"
+        assert riga[0] == vero_padre, "vince l'atto di nascita, non l'atto di morte"
+
+        # E il padre perdente non sparisce: diventa un'anomalia che nomina
+        # entrambi i candidati e l'atto che li ha messi in conflitto.
+        nuove = esito.anomalie[prima_delle_anomalie:]
+        relazionali = [a for a in nuove if a.tipo == "RELATIONSHIP_ANOMALY"]
+        assert relazionali, "il genitore scartato deve restare visibile, non sparire"
+        assert relazionali[0].campo == "padre"
+
+    def test_due_rami_si_incrociano_e_il_nonno_comune_resta_uno(self):
+        """Due figli dello stesso nonno, i cui figli si sposano fra cugini.
+
+        Il nonno va riconosciuto come lo stesso attraverso due atti di
+        nascita indipendenti — quello del figlio e quello della figlia —
+        con il cognome della nonna letto in due modi. E il matrimonio fra
+        cugini, alla generazione dopo, non deve confondere i due sposi fra
+        loro ne' con il nonno che condividono.
+        """
+        esito, prima = in_un_paese([
+            # Il nonno, padre di due figli in atti separati. La nonna e'
+            # letta 'Troilo' una volta e 'Trojlo' l'altra: il nonno si
+            # riconosce dalla moglie in comune, non dalla sola grafia.
+            nascita(1800, ("Carmine", "Petta"), ("Vincenzo", "Petta"),
+                    ("Rosa", "Troilo")),
+            nascita(1803, ("Anna", "Petta"), ("Vincenzo", "Petta"),
+                    ("Rosa", "Trojlo")),
+            # I due nipoti, ciascuno figlio di uno dei due rami.
+            nascita(1825, ("Domenico", "Colella"), ("Carmine", "Petta"),
+                    ("Maria", "Desiderio")),
+            nascita(1828, ("Maria", "Ottaviano"), ("Giuseppe", "Ottaviano"),
+                    ("Anna", "Petta")),
+            # I due rami si richiudono: i cugini si sposano.
+            {"tipo": "matrimonio", "anno": 1850, "persone": [
+                {"ruolo": "sposo", "nome": "Domenico", "cognome": "Colella",
+                 "eta": "venticinque"},
+                {"ruolo": "sposa", "nome": "Maria", "cognome": "Ottaviano",
+                 "eta": "ventidue"},
+            ]},
+        ])
+        nonni = schede_di_prova(esito, prima, ruolo="padre")
+        nonno = [s for s in nonni if "Vincenzo" in s.nomi]
+        assert len(nonno) == 1, "il nonno raggiunto da due figli resta una sola scheda"
+
+        # 'Carmine' e 'Anna' sono anche nomi del paese di contorno: si
+        # restringe alle schede toccate dagli atti di prova, come per il
+        # nonno.
+        padri_di_prova = schede_di_prova(esito, prima, ruolo="padre")
+        madri_di_prova = schede_di_prova(esito, prima, ruolo="madre")
+        figli_di_a = [s for s in padri_di_prova if "Carmine" in s.nomi]
+        figli_di_b = [s for s in madri_di_prova if "Anna" in s.nomi]
+        assert len(figli_di_a) == 1 and len(figli_di_b) == 1
+        assert nonno[0].chiave in figli_di_a[0].padri
+        assert nonno[0].chiave in figli_di_b[0].padri
+
+        # I due cugini che si sposano restano due persone, non una: la
+        # cronologia (nati nel 1825 e nel 1828, sposati nel 1850) e il
+        # sesso li tengono distinti anche se condividono un nonno.
+        sposi = schede_di_prova(esito, prima, ruolo="sposo")
+        spose = schede_di_prova(esito, prima, ruolo="sposa")
+        assert len(sposi) == 1 and len(spose) == 1
+        assert sposi[0].chiave != spose[0].chiave
+
+        # E nessuno e' antenato di se stesso: il nonno non compare fra i
+        # propri discendenti diretti.
+        discendenti = set()
+        frontiera = {nonno[0].chiave}
+        while frontiera:
+            discendenti |= frontiera
+            frontiera = {
+                s.chiave for s in esito.schede.values()
+                if s.padri & frontiera or s.madri & frontiera
+            } - discendenti
+        assert nonno[0].chiave not in (discendenti - {nonno[0].chiave})
+
+    def test_una_persona_nuova_non_si_forza_su_un_omonimo_esistente(self):
+        """Un nuovo Antonio Colella non e' automaticamente quello di prima.
+
+        La scheda esistente ha moglie e figli documentati; il nuovo atto
+        porta lo stesso nome ma una moglie diversa. Il nome da solo
+        genera il candidato — e' giusto che lo generi — ma la famiglia
+        discorde deve impedire la fusione, non solo segnalarla come
+        dubbia: un archivio che forza ogni omonimo sul primo candidato
+        buono inventa figli che non sono mai esistiti.
+        """
+        esistente = [
+            nascita(1840, ("Rosa", "Colella"), ("Antonio", "Colella"),
+                    ("Filomena", "Ottaviano")),
+            nascita(1843, ("Luigi", "Colella"), ("Antonio", "Colella"),
+                    ("Filomena", "Ottaviano")),
+            nascita(1846, ("Anna", "Colella"), ("Antonio", "Colella"),
+                    ("Filomena", "Ottaviano")),
+        ]
+        nuovo = [
+            nascita(1848, ("Vincenzo", "Colella"), ("Antonio", "Colella"),
+                    ("Anna", "Marianacci")),
+        ]
+        esito, prima = in_un_paese(esistente + nuovo)
+        padri = schede_di_prova(esito, prima, ruolo="padre")
+        assert len(padri) == 2, (
+            "il nuovo Antonio, con un'altra moglie, resta una persona diversa"
+        )
 
 
 # ---------------------------------------------------------------------------
