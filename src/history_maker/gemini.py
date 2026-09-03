@@ -78,6 +78,12 @@ STATI_DI_QUOTA = {"RESOURCE_EXHAUSTED"}
 # lavoro di giorni e' un errore di rete che non dice la sua causa.
 LIMITE_RICHIESTA_BYTE = 18_000_000
 
+# Quanto aspettare quando il modello risponde "high demand". E' una
+# congestione dalla parte di Google, tipicamente breve: mezzo minuto e si
+# ritenta lo stesso gruppo. Il tetto ai ritentativi in transcribe.py
+# impedisce che diventi un'attesa senza fine.
+ATTESA_SERVIZIO_OCCUPATO_S = 30.0
+
 # Misurati su 20 chiamate reali con le facciate divise a 1568 px: 16.246
 # token in ingresso e 12.890 in uscita per sei pagine. Servono a stimare
 # il ritmo prima di partire — l'unico modo di rispettare un limite di
@@ -579,9 +585,24 @@ class BackendGemini:
                     f"accetta la tua chiave:\n"
                     f"  python -m history_maker modelli"
                 )
-            # I 5xx sono guasti passeggeri del servizio: quelli si
-            # ritentano, ed e' giusto che il gruppo ripieghi a pagina
-            # singola.
+            # Un servizio occupato non e' una pagina illeggibile.
+            #
+            # Il 503 — "This model is currently experiencing high demand" —
+            # dice che il modello e' sovraccarico, non che ci sia qualcosa
+            # di sbagliato nella richiesta. Trattarlo come un fallimento
+            # del gruppo faceva ripiegare a UNA PAGINA PER CHIAMATA: dodici
+            # richieste al posto di una, per un guasto che non riguarda
+            # nessuna pagina in particolare. E' successo oggi, quattro
+            # volte in tre minuti, e ha bruciato piu' di cento chiamate.
+            #
+            # La risposta giusta e' aspettare e ritentare lo STESSO gruppo,
+            # che e' esattamente cio' che il chiamante fa con un limite di
+            # ritmo. Il tetto ai ritentativi impedisce il ciclo infinito.
+            if http.status_code >= 500:
+                raise LimiteUsoRaggiunto(
+                    f"servizio occupato: {messaggio}",
+                    attesa_s=ATTESA_SERVIZIO_OCCUPATO_S,
+                )
             return Risposta(ok=False, errore=messaggio)
 
         consumi = dati.get("usageMetadata") or {}

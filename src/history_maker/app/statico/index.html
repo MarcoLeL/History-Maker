@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L'albero di Torrebruna</title>
+<link rel="stylesheet" href="/stile.css">
+</head>
+<body>
+
+<header class="barra">
+  <div class="marchio">
+    <strong>L'albero di Torrebruna</strong>
+    <span id="numeri" class="numeri"></span>
+  </div>
+
+  <div class="cerca">
+    <input id="ricerca" type="search" autocomplete="off" spellcheck="false"
+           placeholder="Cerca una persona: cognome, nome, o le due cose">
+    <div id="risultati" class="risultati" hidden></div>
+  </div>
+
+  <div class="comandi">
+    <label>avi
+      <input id="su" type="range" min="0" max="6" value="3">
+      <output id="su-n">3</output>
+    </label>
+    <label>discendenti
+      <input id="giu" type="range" min="0" max="6" value="3">
+      <output id="giu-n">3</output>
+    </label>
+    <button id="adatta" title="Inquadra tutto l'albero">Inquadra</button>
+  </div>
+</header>
+
+<main>
+  <div id="tela" class="tela">
+    <svg id="albero" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="punta" viewBox="0 0 8 8" refX="7" refY="4"
+                markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M0,0 L8,4 L0,8 z" class="punta"/>
+        </marker>
+      </defs>
+      <g id="mondo">
+        <g id="archi"></g>
+        <g id="nodi"></g>
+      </g>
+    </svg>
+
+    <div id="benvenuto" class="benvenuto">
+      <h1>Chi cerchi?</h1>
+      <p>Scrivi un nome nella casella in alto. L'albero si costruisce
+         attorno alla persona che scegli, e ogni altra persona che vedi
+         si puo' cliccare per rimetterla al centro.</p>
+      <div id="suggeriti" class="suggeriti"></div>
+    </div>
+
+    <div id="briciole" class="briciole"></div>
+    <div class="legenda">
+      <span><i class="pallino uomo"></i>uomo</span>
+      <span><i class="pallino donna"></i>donna</span>
+      <span><i class="pallino ignoto"></i>sesso ignoto</span>
+      <span><i class="tratto dedotto"></i>coppia dedotta dai figli</span>
+      <span><i class="tratto certo"></i>matrimonio documentato</span>
+    </div>
+  </div>
+
+  <aside id="scheda" class="scheda" hidden></aside>
+</main>
+
+<div id="lente" class="lente" hidden>
+  <button class="chiudi" id="chiudi-lente" aria-label="Chiudi">&times;</button>
+  <img id="lente-img" alt="Pagina del registro">
+  <div id="lente-didascalia" class="didascalia"></div>
+</div>
+
+<script src="/albero.js"></script>
+</body>
+</html>

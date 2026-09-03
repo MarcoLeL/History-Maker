@@ -94,9 +94,19 @@ cognomi:
     - Lizzi
   Bracchi:
     - Branchi
+  # La L maiuscola della cancelleresca si legge F o C con la stessa
+  # facilita': 'Fella' (67), 'Felle' (23), 'Cella' (27) e 'Celle' (5)
+  # contro 1.375 'Lella'. Il calcolo le aveva gia' proposte — 'Fella'
+  # sta a 0,94 da 'Lella' — ma non poteva applicarle da solo, perche' la
+  # stessa regola trascinerebbe 'Villa' e 'Stella', che famiglie vere
+  # potrebbero esserlo. Qui la decisione e' presa: a Torrebruna sono Lella.
   Lella:
     - Della
     - Leppa
+    - Fella
+    - Felle
+    - Cella
+    - Celle
   Troilo:
     - Trojlo
   Rossi:
@@ -147,3 +157,20 @@ cognomi:
 # Confermare una lettura rara vale quanto correggerla: metterla qui la
 # toglie dalle segnalazioni future senza cambiare il dato.
 confermati: []
+
+# Mestieri che sono lo stesso mestiere detto in due modi.
+#
+# La statistica sa riconoscere una grafia rovinata — 'Agrimenfore' per
+# 'Agrimensore', dove la 'ſ' lunga e' stata letta 'f' — perche' le due
+# forme si somigliano. Non sa riconoscere due parole diverse per la
+# stessa occupazione: 'bovajo' e 'bovaro' stanno a 0,83, sotto la soglia
+# che pretende due grafie della stessa parola, e alzarla farebbe
+# collassare 'muratore' su 'proprietario'.
+#
+# Questo e' il posto dove entra chi conosce il mestiere e il paese. La
+# chiave e' la forma da tenere; sotto, i modi in cui si e' vista scritta.
+# La lettura originale resta comunque nel campo 'grezzo' dei fatti.
+mestieri: {}
+  # bovaro:
+  #   - bovajo
+  #   - vaccaro

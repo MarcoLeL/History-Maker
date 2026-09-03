@@ -15,6 +15,7 @@ resta a chi guarda l'immagine.
 from __future__ import annotations
 
 import unicodedata
+from functools import lru_cache
 
 # Scambi ricorrenti nelle grafie corsive italiane del XIX secolo. Sono
 # coppie non orientate: costano poco perche' un occhio esperto le confonde
@@ -65,6 +66,12 @@ def _senza_accenti(testo: str) -> str:
     return "".join(c for c in scomposto if not unicodedata.combining(c))
 
 
+# Le forme in gioco sono poche migliaia e ricorrono senza fine: il
+# raggruppamento delle varianti confronta ogni forma con ogni altra
+# abbastanza vicina di lunghezza, e ognuno di quei confronti normalizza
+# le due stringhe da capo. Ricordarsi il risultato non cambia nessun
+# esito — sono funzioni pure — e toglie di mezzo la meta' del lavoro.
+@lru_cache(maxsize=100_000)
 def normalizza(cognome: str) -> str:
     """Forma di confronto: minuscolo, senza accenti, apostrofi e spazi doppi."""
     testo = _senza_accenti(cognome or "").casefold()
@@ -72,6 +79,7 @@ def normalizza(cognome: str) -> str:
     return " ".join(testo.split())
 
 
+@lru_cache(maxsize=100_000)
 def forma_canonica(cognome: str) -> str:
     """Forma che collassa le differenze piu' comuni fra grafie.
 
@@ -117,6 +125,26 @@ def _costo_sostituzione(a: str, b: str) -> float:
     return _COSTI.get(frozenset((a, b)), COSTO_PIENO)
 
 
+def _tabella_multiple() -> dict[tuple[str, str], tuple[tuple[str, str], ...]]:
+    """Gli scambi fra sequenze, indicizzati per la loro ultima lettera.
+
+    Perche' ``a[i-len(x):i] == x`` sia vero deve intanto essere vero
+    ``a[i-1] == x[-1]``: e' una condizione necessaria, quindi indicizzare
+    su quella coppia di lettere non salta nessuno scambio che prima si
+    trovava. Serve perche' il ciclo su queste sei coppie girava per ogni
+    cella della matrice — dodici confronti di sottostringa su ognuna —
+    ed era il grosso del costo di una distanza.
+    """
+    tabella: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for corta, lunga in CONFUSIONI_MULTIPLE:
+        for x, y in ((corta, lunga), (lunga, corta)):
+            tabella.setdefault((x[-1], y[-1]), []).append((x, y))
+    return {chiave: tuple(valore) for chiave, valore in tabella.items()}
+
+
+_MULTIPLE = _tabella_multiple()
+
+
 def distanza(prima: str, seconda: str) -> float:
     """Distanza di edit pesata sulle confusioni della mano ottocentesca.
 
@@ -143,20 +171,23 @@ def distanza(prima: str, seconda: str) -> float:
                 riga[j - 1] + 1.0,                                         # inserzione
                 precedenti[-1][j - 1] + _costo_sostituzione(a[i - 1], b[j - 1]),
             )
-            # Scambi fra sequenze di lunghezza diversa (m <-> ni).
-            for corta, lunga in CONFUSIONI_MULTIPLE:
-                for x, y in ((corta, lunga), (lunga, corta)):
-                    if (
-                        i >= len(x) and j >= len(y)
-                        and a[i - len(x) : i] == x
-                        and b[j - len(y) : j] == y
-                    ):
-                        candidato = precedenti[-len(x)][j - len(y)] + COSTO_CONFUSIONE
-                        riga[j] = min(riga[j], candidato)
+            # Scambi fra sequenze di lunghezza diversa (m <-> ni). Solo
+            # quelli che possono valere per le due lettere correnti: su
+            # una cella qualsiasi non ce n'e' nessuno, e la tabella lo
+            # dice senza confrontare sottostringhe.
+            for x, y in _MULTIPLE.get((a[i - 1], b[j - 1]), ()):
+                if (
+                    i >= len(x) and j >= len(y)
+                    and a[i - len(x) : i] == x
+                    and b[j - len(y) : j] == y
+                ):
+                    candidato = precedenti[-len(x)][j - len(y)] + COSTO_CONFUSIONE
+                    riga[j] = min(riga[j], candidato)
         precedenti.append(riga)
     return precedenti[-1][-1]
 
 
+@lru_cache(maxsize=500_000)
 def somiglianza(prima: str, seconda: str) -> float:
     """Distanza normalizzata sulla lunghezza: 1.0 identiche, 0.0 estranee."""
     a, b = normalizza(prima).replace(" ", ""), normalizza(seconda).replace(" ", "")

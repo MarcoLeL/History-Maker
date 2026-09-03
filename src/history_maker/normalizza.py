@@ -154,15 +154,47 @@ def _raggruppa(forme: list[str], soglia: float = SOGLIA_GRUPPO) -> list[list[str
             f = padre[f]
         return f
 
-    for i, a in enumerate(forme):
-        for b in forme[i + 1 :]:
-            vicine = paleografia.forma_canonica(a) == paleografia.forma_canonica(b) or (
-                paleografia.somiglianza(a, b) >= soglia
-            )
-            if vicine:
-                ra, rb = radice(a), radice(b)
-                if ra != rb:
-                    padre[ra] = rb
+    def unisci(a: str, b: str) -> None:
+        ra, rb = radice(a), radice(b)
+        if ra != rb:
+            padre[ra] = rb
+
+    # 1. Le forme con la stessa forma canonica stanno insieme per
+    #    definizione. E' un raggruppamento per chiave, quindi lineare, e
+    #    va fatto a parte: 'Di Nardo' e 'Dinardo' hanno la stessa forma
+    #    canonica ma lunghezze diverse, e il filtro del passo 2 le
+    #    scarterebbe.
+    per_canonica: dict[str, str] = {}
+    for f in forme:
+        chiave = paleografia.forma_canonica(f)
+        if chiave in per_canonica:
+            unisci(f, per_canonica[chiave])
+        else:
+            per_canonica[chiave] = f
+
+    # 2. Il confronto a coppie, ma solo fra le coppie che POSSONO
+    #    superare la soglia.
+    #
+    #    E' un limite dimostrato, non un'euristica: la somiglianza vale
+    #    ``1 - distanza/lunghezza_massima`` e cancellare o inserire un
+    #    carattere costa 1,0, quindi ``distanza >= |len(a) - len(b)|``.
+    #    Perche' la somiglianza raggiunga la soglia serve dunque
+    #    ``len(corta) >= soglia * len(lunga)``: due forme troppo diverse
+    #    in lunghezza non possono essere varianti, e calcolarne la
+    #    distanza e' tempo buttato.
+    #
+    #    Ordinando per lunghezza il taglio diventa un'uscita anticipata.
+    #    Misurato su Torrebruna: 3.301 forme di cognome sono 5,4 milioni
+    #    di coppie a 297 microsecondi l'una — ventisette minuti. Con il
+    #    filtro restano poche decine di migliaia di confronti.
+    ordinate = sorted(forme, key=len)
+    for i, a in enumerate(ordinate):
+        lunghezza_a = len(a)
+        for b in ordinate[i + 1 :]:
+            if lunghezza_a < soglia * len(b):
+                break  # da qui in poi sono tutte piu' lunghe: nessuna puo' bastare
+            if paleografia.somiglianza(a, b) >= soglia:
+                unisci(a, b)
 
     gruppi: dict[str, list[str]] = {}
     for f in forme:
@@ -199,14 +231,19 @@ def _piu_vicina(
     return migliore, punteggio
 
 
-def _abbastanza_evidente(somiglianza: float, dominanza: float) -> bool:
+def _abbastanza_evidente(
+    somiglianza: float,
+    dominanza: float,
+    regole: tuple[tuple[float, float], ...] = REGOLE_AUTOMATICHE,
+) -> bool:
     return any(
-        somiglianza >= s_min and dominanza >= d_min for s_min, d_min in REGOLE_AUTOMATICHE
+        somiglianza >= s_min and dominanza >= d_min for s_min, d_min in regole
     )
 
 
 def raggruppa_varianti(
     frequenze: Counter[str],
+    regole: tuple[tuple[float, float], ...] = REGOLE_AUTOMATICHE,
 ) -> tuple[dict[str, str], list[Proposta]]:
     """Divide le varianti fra quelle da unire e quelle da sottoporre.
 
@@ -263,7 +300,7 @@ def raggruppa_varianti(
             alla_pari = quante >= frequenze[canonica]
 
             if not alla_pari and (
-                stessa_stringa or stessa_canonica or _abbastanza_evidente(simile, dominanza)
+                stessa_stringa or stessa_canonica or _abbastanza_evidente(simile, dominanza, regole)
             ):
                 correzioni[variante] = canonica
                 continue

@@ -25,7 +25,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterator
 
-from history_maker import glossario, normalizza, paleografia
+from history_maker import glossario, normalizza, paleografia, ricuci
 from history_maker.config import Config
 
 logger = logging.getLogger(__name__)
@@ -407,6 +407,13 @@ def costruisci(config: Config) -> Path:
         return corretto, incerto
 
     n_atti = n_persone = n_pagine = n_voci = 0
+    # Quante pagine ci sono in tutto: serve a dare una percentuale invece
+    # di un silenzio. Contarle costa un attraversamento di directory, e
+    # vale ogni millisecondo — tre volte oggi una fase muta e' sembrata
+    # bloccata mentre lavorava.
+    da_leggere = sum(1 for p in config.trascrizioni.rglob("*.json") if not p.name.startswith("_"))
+    logger.info("Fase 1/5: leggo %d pagine di trascrizione", da_leggere)
+    passo = max(1, da_leggere // 20)
     # Gli slug che la configurazione tiene. Senza catalogo — una raccolta
     # trascritta a mano — si prende tutto quello che c'e'.
     ammessi = None
@@ -415,7 +422,12 @@ def costruisci(config: Config) -> Path:
 
         ammessi = {r.slug for r in selezione(Catalogo.carica(config.catalogo), config)}
 
-    for pagina in leggi_trascrizioni(config.trascrizioni, ammessi):
+    for lette, pagina in enumerate(leggi_trascrizioni(config.trascrizioni, ammessi), 1):
+        if lette % passo == 0 or lette == da_leggere:
+            logger.info(
+                "  ...%d/%d pagine (%d%%) — %d atti, %d persone",
+                lette, da_leggere, 100 * lette // max(1, da_leggere), n_atti, n_persone,
+            )
         origine = pagina.get("_origine", {})
         n_pagine += 1
         conn.execute(
@@ -448,6 +460,7 @@ def costruisci(config: Config) -> Path:
             n_voci += 1
 
         for atto in pagina.get("atti") or []:
+            luogo_corretto, luogo_incerto = _con_glossario_e_dubbio(atto.get("luogo"), "luogo")
             cursore = conn.execute(
                 """INSERT INTO atti (registro, immagine, numero_atto, tipo, anno,
                                      data_atto, data_evento, ora_evento, luogo,
@@ -463,11 +476,17 @@ def costruisci(config: Config) -> Path:
                     atto.get("data_atto"),
                     atto.get("data_evento"),
                     atto.get("ora_evento"),
-                    *_con_glossario_e_dubbio(atto.get("luogo"), "luogo"),
+                    # Valori nominati invece che spacchettati con '*'.
+                    # Lo spacchettamento faceva finire il flag 'incerto'
+                    # nella colonna 'luogo_letto' e il testo del luogo in
+                    # 'luogo_incerto': uno scambio invisibile finche' un
+                    # atto senza luogo non ha fatto scattare il vincolo
+                    # NOT NULL. Con tre colonne consecutive che parlano
+                    # tutte del luogo, l'ordine posizionale e' una trappola.
+                    luogo_corretto,
                     atto.get("luogo"),
-                    normalizza.via_da(
-                        _con_glossario(atto.get("luogo"), "luogo"), config.comune
-                    ),
+                    int(luogo_incerto),
+                    normalizza.via_da(luogo_corretto, config.comune),
                     atto.get("testo_integrale"),
                     atto.get("affidabilita"),
                     "; ".join(atto.get("parti_illeggibili") or []) or None,
@@ -524,9 +543,39 @@ def costruisci(config: Config) -> Path:
                 )
                 n_persone += 1
 
+    # Prima di qualunque altra cosa si rimettono insieme gli atti che la
+    # paginazione ha spezzato. Va fatto qui e non dopo: tutto quello che
+    # segue — le varianti, il riconoscimento, le parentele — legge
+    # 'dentro un atto', e finche' un matrimonio sta su tre atti diversi
+    # non c'e' nessun atto che contenga una coppia.
+    cuciti, tolti = ricuci.ricuci_atti(conn)
+    if cuciti:
+        logger.info(
+            "Fase 1b/5: %d atti spezzati su piu' pagine rimessi insieme "
+            "(%d frammenti riassorbiti)", cuciti, tolti,
+        )
+        n_atti -= tolti
+
+    logger.info("Fase 2/5: applico le alternative lette nelle note")
     _applica_alternative(conn)
+
+    # E' la fase lenta, e ora si sa perche': confronta ogni cognome con
+    # ogni altro con una distanza pesata sulle confusioni paleografiche.
+    # Cresce col QUADRATO delle forme distinte — su 86 pagine erano ~200
+    # forme, su 5.000 sono 3.301 — quindi e' quella che va detta a voce.
+    distinti = conn.execute(
+        "SELECT COUNT(DISTINCT cognome) FROM persone WHERE cognome IS NOT NULL"
+    ).fetchone()[0]
+    logger.info(
+        "Fase 3/5: raggruppo le varianti di %d forme di cognome "
+        "(confronto a coppie: e' la fase lunga)", distinti,
+    )
     proposte = _unifica_varianti(conn)
+
+    logger.info("Fase 4/5: raggruppo le varianti dei toponimi")
     toponimi = _proposte_toponimi(conn)
+
+    logger.info("Fase 5/5: indice full-text, CSV e sintesi")
 
     conn.execute(
         "INSERT INTO atti_fts(rowid, testo_integrale, numero_atto, luogo) "

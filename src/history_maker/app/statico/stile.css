@@ -1,0 +1,389 @@
+/* L'aspetto dell'archivio.
+   Una tavolozza da carta d'archivio: fondo caldo, inchiostro bruno,
+   e il colore usato con parsimonia perche' su un albero di trecento nodi
+   ogni tinta in piu' e' rumore. */
+
+:root {
+  --carta: #f6f2ea;
+  --carta-alta: #fffdf8;
+  --riga: #e0d8c8;
+  --riga-forte: #cdc0a8;
+  --inchiostro: #2e2a24;
+  --inchiostro-lieve: #6d6455;
+  --uomo: #3d6b8e;
+  --donna: #94566d;
+  --ignoto: #8a8378;
+  --accento: #9c5a2d;
+  --ombra: rgba(60, 50, 35, .16);
+  --barra-h: 3.6rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --carta: #191714;
+    --carta-alta: #23201b;
+    --riga: #3a352d;
+    --riga-forte: #524a3e;
+    --inchiostro: #ece5d8;
+    --inchiostro-lieve: #a49a88;
+    --uomo: #7fb0d6;
+    --donna: #d295ac;
+    --ignoto: #9b9384;
+    --accento: #d99b63;
+    --ombra: rgba(0, 0, 0, .45);
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* 'hidden' e' un attributo, ma vale meno di qualunque 'display' scritto
+   in una regola: senza questa riga la lente sull'immagine resta aperta
+   sopra tutto il resto perche' e' un flex. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--carta);
+  color: var(--inchiostro);
+  font: 15px/1.5 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+/* --- la barra in alto --------------------------------------------------- */
+
+.barra {
+  flex: 0 0 auto;
+  height: var(--barra-h);
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 0 1rem;
+  background: var(--carta-alta);
+  border-bottom: 1px solid var(--riga-forte);
+  z-index: 30;
+}
+
+.marchio { display: flex; flex-direction: column; line-height: 1.15; }
+.marchio strong { font-size: .98rem; letter-spacing: .01em; }
+.numeri { font-size: .72rem; color: var(--inchiostro-lieve); }
+
+.cerca { position: relative; flex: 1 1 auto; max-width: 34rem; }
+
+.cerca input {
+  width: 100%;
+  padding: .45rem .7rem;
+  font: inherit;
+  font-size: .92rem;
+  color: inherit;
+  background: var(--carta);
+  border: 1px solid var(--riga-forte);
+  border-radius: 5px;
+}
+.cerca input:focus { outline: 2px solid var(--accento); outline-offset: -1px; }
+
+.risultati {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--carta-alta);
+  border: 1px solid var(--riga-forte);
+  border-radius: 5px;
+  box-shadow: 0 8px 24px var(--ombra);
+  z-index: 40;
+}
+
+.risultati button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: .45rem .7rem;
+  font: inherit;
+  font-size: .88rem;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--riga);
+  cursor: pointer;
+}
+.risultati button:last-child { border-bottom: 0; }
+.risultati button:hover, .risultati button:focus { background: var(--carta); }
+.risultati .meta { display: block; font-size: .74rem; color: var(--inchiostro-lieve); }
+.risultati .vuoto { padding: .7rem; font-size: .85rem; color: var(--inchiostro-lieve); }
+.risultati .fuori {
+  padding: .5rem .7rem;
+  border-top: 1px solid var(--riga);
+  font-size: .74rem;
+  font-style: italic;
+  color: var(--inchiostro-lieve);
+}
+
+.comandi { display: flex; align-items: center; gap: .9rem; font-size: .76rem; }
+.comandi label { display: flex; align-items: center; gap: .3rem; color: var(--inchiostro-lieve); }
+.comandi input[type=range] { width: 5rem; accent-color: var(--accento); }
+.comandi output { min-width: 1ch; font-variant-numeric: tabular-nums; }
+
+button.azione, #adatta {
+  font: inherit;
+  font-size: .78rem;
+  padding: .3rem .6rem;
+  color: inherit;
+  background: var(--carta);
+  border: 1px solid var(--riga-forte);
+  border-radius: 4px;
+  cursor: pointer;
+}
+button.azione:hover, #adatta:hover { border-color: var(--accento); color: var(--accento); }
+
+/* --- l'area principale -------------------------------------------------- */
+
+main { flex: 1 1 auto; display: flex; min-height: 0; }
+
+.tela { position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.tela svg { width: 100%; height: 100%; display: block; cursor: grab; }
+.tela svg.trascina { cursor: grabbing; }
+
+/* --- i nodi ------------------------------------------------------------- */
+
+.nodo { cursor: pointer; }
+.nodo rect {
+  fill: var(--carta-alta);
+  stroke: var(--riga-forte);
+  stroke-width: 1;
+  rx: 5;
+  transition: stroke .12s, filter .12s;
+}
+.nodo:hover rect { stroke: var(--accento); stroke-width: 2; }
+.nodo.radice rect { stroke: var(--accento); stroke-width: 2.5; fill: var(--carta); }
+.nodo.evidenzia rect { stroke: var(--accento); stroke-width: 2; }
+
+.nodo .sesso { width: 4px; }
+.nodo.uomo .sesso { fill: var(--uomo); }
+.nodo.donna .sesso { fill: var(--donna); }
+.nodo.ignoto .sesso { fill: var(--ignoto); }
+
+.nodo text { pointer-events: none; }
+.nodo .nome { font-size: 12.5px; font-weight: 600; fill: var(--inchiostro); }
+.nodo .date { font-size: 10.5px; fill: var(--inchiostro-lieve); }
+.nodo .extra { font-size: 9.5px; fill: var(--inchiostro-lieve); font-style: italic; }
+.nodo .altro {
+  font-size: 9px;
+  fill: var(--accento);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* --- gli archi ---------------------------------------------------------- */
+
+#archi path { fill: none; stroke: var(--riga-forte); stroke-width: 1.3; }
+#archi path.filiazione { stroke: var(--riga-forte); }
+#archi path.unione { stroke-width: 2; }
+#archi path.unione.certo { stroke: var(--accento); }
+#archi path.unione.dedotto { stroke: var(--ignoto); stroke-dasharray: 4 3; }
+#archi path.acceso { stroke: var(--accento); stroke-width: 2.2; }
+.punta { fill: var(--riga-forte); }
+
+/* --- il benvenuto ------------------------------------------------------- */
+
+.benvenuto {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .6rem;
+  padding: 2rem;
+  text-align: center;
+  pointer-events: none;
+}
+.benvenuto h1 { margin: 0; font-size: 1.6rem; font-weight: 600; }
+.benvenuto p { margin: 0; max-width: 30rem; color: var(--inchiostro-lieve); font-size: .92rem; }
+.suggeriti { display: flex; flex-wrap: wrap; gap: .4rem; justify-content: center; margin-top: .6rem; pointer-events: auto; }
+.suggeriti button {
+  font: inherit; font-size: .82rem;
+  padding: .3rem .65rem;
+  color: inherit;
+  background: var(--carta-alta);
+  border: 1px solid var(--riga-forte);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.suggeriti button:hover { border-color: var(--accento); color: var(--accento); }
+
+/* --- briciole e legenda ------------------------------------------------- */
+
+.briciole {
+  position: absolute; top: .6rem; left: .6rem;
+  display: flex; flex-wrap: wrap; gap: .3rem;
+  max-width: calc(100% - 1.2rem);
+}
+.briciole button {
+  font: inherit; font-size: .74rem;
+  padding: .18rem .5rem;
+  color: var(--inchiostro-lieve);
+  background: var(--carta-alta);
+  border: 1px solid var(--riga);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.briciole button:hover { color: var(--accento); border-color: var(--accento); }
+.briciole button.ora { color: var(--accento); border-color: var(--accento); }
+
+.legenda {
+  position: absolute; bottom: .6rem; left: .6rem;
+  display: flex; flex-wrap: wrap; gap: .75rem;
+  padding: .35rem .6rem;
+  font-size: .72rem;
+  color: var(--inchiostro-lieve);
+  background: color-mix(in srgb, var(--carta-alta) 88%, transparent);
+  border: 1px solid var(--riga);
+  border-radius: 5px;
+}
+.legenda span { display: flex; align-items: center; gap: .3rem; }
+.pallino { width: .6rem; height: .6rem; border-radius: 50%; display: inline-block; }
+.pallino.uomo { background: var(--uomo); }
+.pallino.donna { background: var(--donna); }
+.pallino.ignoto { background: var(--ignoto); }
+.tratto { width: 1.1rem; height: 0; border-top: 2px solid var(--accento); display: inline-block; }
+.tratto.dedotto { border-top-style: dashed; border-color: var(--ignoto); }
+
+/* --- la scheda ---------------------------------------------------------- */
+
+.scheda {
+  flex: 0 0 25rem;
+  max-width: 40vw;
+  overflow-y: auto;
+  padding: 1rem 1.1rem 3rem;
+  background: var(--carta-alta);
+  border-left: 1px solid var(--riga-forte);
+}
+
+.scheda h2 { margin: 0 0 .1rem; font-size: 1.22rem; line-height: 1.2; }
+.scheda .sottotitolo { margin: 0 0 .8rem; font-size: .82rem; color: var(--inchiostro-lieve); }
+
+.scheda h3 {
+  margin: 1.3rem 0 .4rem;
+  font-size: .74rem;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--inchiostro-lieve);
+  border-bottom: 1px solid var(--riga);
+  padding-bottom: .2rem;
+}
+
+.fatti { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: .18rem .7rem; font-size: .85rem; }
+.fatti dt { color: var(--inchiostro-lieve); }
+.fatti dd { margin: 0; }
+
+.parenti { list-style: none; margin: 0; padding: 0; }
+.parenti li { margin-bottom: .12rem; }
+.parenti button {
+  font: inherit; font-size: .87rem;
+  text-align: left;
+  width: 100%;
+  padding: .22rem .35rem;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.parenti button:hover { background: var(--carta); color: var(--accento); }
+.parenti .meta { color: var(--inchiostro-lieve); font-size: .78rem; }
+.parenti .ramo { color: var(--accento); font-size: .72rem; }
+
+.vuoto-nota { font-size: .82rem; color: var(--inchiostro-lieve); font-style: italic; }
+
+details.atto {
+  border: 1px solid var(--riga);
+  border-radius: 5px;
+  margin-bottom: .35rem;
+  background: var(--carta);
+}
+details.atto > summary {
+  padding: .35rem .5rem;
+  font-size: .83rem;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  gap: .4rem;
+  align-items: baseline;
+}
+details.atto > summary::-webkit-details-marker { display: none; }
+details.atto > summary:hover { color: var(--accento); }
+details.atto .anno { font-weight: 700; font-variant-numeric: tabular-nums; }
+details.atto .ruolo {
+  font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--carta-alta); background: var(--inchiostro-lieve);
+  padding: .05rem .3rem; border-radius: 3px;
+}
+details.atto .corpo { padding: 0 .5rem .5rem; font-size: .82rem; }
+details.atto .testo {
+  white-space: pre-wrap;
+  font-size: .78rem;
+  line-height: 1.45;
+  max-height: 15rem;
+  overflow-y: auto;
+  padding: .4rem .5rem;
+  margin: .4rem 0;
+  background: var(--carta-alta);
+  border-left: 2px solid var(--riga-forte);
+}
+details.atto .compagni { list-style: none; margin: .3rem 0 0; padding: 0; }
+details.atto .compagni li { font-size: .78rem; margin-bottom: .08rem; }
+details.atto .compagni button {
+  font: inherit; font-size: .78rem; padding: 0;
+  color: var(--accento); background: none; border: 0; cursor: pointer;
+  text-decoration: underline dotted;
+}
+details.atto .compagni .spento { color: var(--inchiostro-lieve); }
+
+.pagina {
+  display: inline-block;
+  margin-top: .35rem;
+  font-size: .76rem;
+  color: var(--accento);
+  background: none;
+  border: 1px solid var(--riga-forte);
+  border-radius: 4px;
+  padding: .2rem .45rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.pagina:hover { border-color: var(--accento); }
+
+.avviso {
+  font-size: .78rem;
+  color: var(--inchiostro-lieve);
+  background: var(--carta);
+  border-left: 2px solid var(--accento);
+  padding: .35rem .5rem;
+  margin: .5rem 0;
+}
+
+/* --- la lente sull'immagine --------------------------------------------- */
+
+.lente {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .6rem; padding: 2rem;
+  background: rgba(20, 17, 13, .92);
+}
+.lente img { max-width: 96vw; max-height: 84vh; object-fit: contain; box-shadow: 0 10px 40px #000; }
+.lente .didascalia { color: #ddd3c2; font-size: .82rem; text-align: center; }
+.lente .chiudi {
+  position: absolute; top: 1rem; right: 1.4rem;
+  font-size: 2rem; line-height: 1;
+  color: #ddd3c2; background: none; border: 0; cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  main { flex-direction: column; }
+  .scheda { flex: 0 0 45%; max-width: none; border-left: 0; border-top: 1px solid var(--riga-forte); }
+  .comandi label { display: none; }
+}

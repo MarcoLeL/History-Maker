@@ -14,6 +14,8 @@ La pipeline fa quattro cose, in quattro comandi separati:
 | 3 | **transcribe** | Gemini (piano gratuito) | `data/trascrizioni/` — gli atti in JSON |
 | 4 | **dataset** | SQLite | `data/dataset/` — database, CSV e sintesi |
 | 5 | **revisione** | statistica | `revisione.md` — le letture da ricontrollare |
+| 6 | **ricostruisci** | modello probabilistico | l'albero: chi è chi, e con quanta sicurezza |
+| 7 | **qualita** | aritmetica | `qualita.md` — cosa nell'albero non può essere vero |
 
 Ogni fase legge l'esito della precedente e può essere rilanciata da sola.
 Tutte riprendono da dove si erano interrotte.
@@ -167,6 +169,17 @@ python -m history_maker dataset
 
 # 5. scopri dove le trascrizioni probabilmente sbagliano (non consuma quota)
 python -m history_maker revisione
+
+# 6. riconosci le persone e ricostruisci l'albero (non consuma quota)
+python -m history_maker ricostruisci
+python -m history_maker dubbi              # cosa il calcolo non ha saputo decidere
+
+# 7. conta cio' che nell'albero non puo' essere vero
+python -m history_maker qualita
+
+# solo sui casi che restano ambigui, e solo se vuoi spenderci quota:
+python -m history_maker verifica --elenca  # le domande che farebbe all'immagine
+python -m history_maker arbitra --elenca   # i casi che manderebbe a un modello
 
 # in qualunque momento: due letture delle stesse pagine, a confronto
 python -m history_maker confronta data/trascrizioni data/altra-lettura
@@ -365,6 +378,111 @@ decidi tu. **Confermare una forma rara è un risultato quanto correggerla.**
 Quello che questa fase *non* fa: se una grafia è oggettivamente
 illeggibile, nessuna statistica la salva. Riduce gli errori sistematici e
 ti dice dove guardare; non sostituisce il tuo occhio sull'originale.
+
+---
+
+---
+
+## La fase 6: dalle menzioni alle persone
+
+La tabella `persone` della fase 4 non contiene persone: contiene
+**menzioni**. Un uomo che nasce nel 1820, si sposa nel 1845, ha sei figli
+e muore nel 1889 compare almeno dieci volte, ogni volta come una riga
+nuova, e nessuna delle dieci sa delle altre. Riconoscerle è il lavoro di
+questa fase, e in un paese di poche famiglie è difficile per una ragione
+precisa: **il nome non identifica nessuno.**
+
+I Pelliccia sono 5.121 menzioni su 49.889, il primogenito porta il nome
+del nonno, e «Domenico Pelliccia» sono cinque uomini diversi nello stesso
+mezzo secolo. All'incontrario, la stessa persona compare come `Lella`,
+`Lelli`, `Fella`, `Lallo`, perché ogni scrivano ha la sua mano.
+
+### Gli indizi si pesano sul paese, non a tavolino
+
+Ogni indizio vale il logaritmo del rapporto fra due probabilità: quanto è
+probabile vedere quella coincidenza se sono la stessa persona, diviso
+quanto è probabile vederla per caso in **questo** archivio.
+
+    Pelliccia   log10(0,80 / 0,103)    = +0,89     indizio debole
+    Genualdi    log10(0,80 / 0,00012)  = +3,8      indizio forte
+
+Due Pelliccia non sono un indizio: sono la normalità del paese. Due
+Genualdi — sei menzioni in un secolo — sono quasi certamente parenti.
+Nessuno ha dovuto deciderlo: la differenza la fa la frequenza, e la
+frequenza si conta.
+
+Vale per tutto, e soprattutto per le **parentele**: «figlio di Filippo
+Lella e Margherita Rossi» è raro nello stesso modo in cui è raro un
+cognome, e pesa da sé quanto merita.
+
+### Restano cinque impossibilità, non otto veti
+
+Due atti di nascita distinti, due atti di morte distinti, comparire vivi
+dopo il proprio funerale, partorire per più anni di quanti se ne abbiano
+di fertili, ricoprire un ruolo prima dell'età che quel ruolo richiede.
+Sono le sole cose che il mondo non consente.
+
+Tutto il resto è graduale. Un cognome del tutto diverso costa 1,5, una
+parentela in comune ne vale 2,8: **il cognome sbagliato si può
+superare**, ed è il caso di Nicola Pelliccia letto `Bellucci` in un atto,
+con la stessa moglie e gli stessi figli negli altri. Un'età che non torna
+di dodici anni costa un punto, che un coniuge in comune ripaga tre volte.
+
+### Si torna indietro, e resta scritto perché
+
+Le schede si fondono **e si separano**, per quanti giri servono. Ogni
+fusione lascia nella tabella `decisioni` le prove a favore, le
+contraddizioni, la confidenza e la versione dell'algoritmo che l'ha
+presa; ogni persona ha una chiave stabile — l'identificatore della sua
+menzione più antica — così che un'annotazione fatta oggi valga ancora
+domani.
+
+### I dubbi sono la coda di lavoro, non lo scarto
+
+Quello che il calcolo non decide diventa un'anomalia con una priorità, e
+la priorità è **il dubbio moltiplicato per quante persone la risposta
+sposterebbe**:
+
+```bash
+python -m history_maker dubbi --quanti 20
+```
+
+Da lì partono le due code costose, e solo da lì. `verifica` ritaglia
+dall'immagine **a piena risoluzione** la banda in cui una parola dovrebbe
+trovarsi e fa una domanda chiusa — «il cognome del padre è Lella o
+Lelli?» — invece di ritrascrivere una pagina che è già stata letta.
+`arbitra` sottopone a un modello di ragionamento i casi della fascia
+grigia, con un fascicolo che contiene le prove **a favore e contro**: un
+fascicolo che presenta solo l'ipotesi della fusione ottiene fusioni.
+
+Le due code sono le uniche cose di questa fase che consumino quota, e
+sono le uniche in cui spenderla cambia qualcosa.
+
+### Le risposte tornano indietro
+
+Una risposta non resta in una tabella: diventa una **decisione con un
+autore**, e la ricostruzione successiva la applica.
+
+```bash
+python -m history_maker verifica --quante 12   # l'immagine corregge otto età
+python -m history_maker arbitra  --quanti 30   # il modello unisce sedici schede
+python -m history_maker ricostruisci           # e da qui in poi valgono
+```
+
+Vale anche per te:
+
+```bash
+python -m history_maker decidi unione 2396 10686 --perche "stessa moglie, stessi figli"
+python -m history_maker decidi disfa 47 --perche "l'atto del 1852 dice altro"
+```
+
+Le imposizioni scavalcano il punteggio ma **non i veti**: se unire due
+schede produrrebbe una donna che partorisce dopo il proprio funerale, la
+fusione non si fa e resta scritto perché. E niente si cancella — tornare
+indietro è una decisione nuova che nomina la vecchia.
+
+Il ragionamento per esteso, con le misure e gli errori che ha fatto per
+strada, sta in **[`docs/ricostruzione.md`](docs/ricostruzione.md)**.
 
 ---
 

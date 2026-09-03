@@ -50,6 +50,12 @@ class Correzione:
 class Glossario:
     toponimi: dict[str, str] = field(default_factory=dict)
     cognomi: dict[str, str] = field(default_factory=dict)
+    # I mestieri servono a una cosa che la statistica non sa fare:
+    # riconoscere due **parole diverse** per la stessa occupazione.
+    # 'Bovajo' e 'bovaro' non si somigliano abbastanza da sembrare due
+    # grafie della stessa parola, e infatti non lo sono: sono due modi
+    # di dirla, e solo chi conosce il paese puo' dichiararlo.
+    mestieri: dict[str, str] = field(default_factory=dict)
     confermati: set[str] = field(default_factory=set)
 
     @classmethod
@@ -70,6 +76,7 @@ class Glossario:
         return cls(
             toponimi=cls._rovescia(dati.get("toponimi") or {}),
             cognomi=cls._rovescia(dati.get("cognomi") or {}),
+            mestieri=cls._rovescia(dati.get("mestieri") or {}),
             confermati={_chiave(v) for v in (dati.get("confermati") or [])},
         )
 

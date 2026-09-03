@@ -580,3 +580,36 @@ def test_ogni_modello_ha_il_suo_contatore(config, tmp_path):
     flash.ritmo.segna()
     assert flash.ritmo.fatte_oggi() == 1
     assert lite.ritmo.fatte_oggi() == 0
+
+
+def test_un_servizio_occupato_non_fa_spacchettare_il_gruppo(config, chiave):
+    """Un 503 non riguarda nessuna pagina in particolare.
+
+    "This model is currently experiencing high demand" dice che il modello
+    e' sovraccarico, non che la richiesta sia sbagliata. Trattandolo come
+    fallimento del gruppo, il codice ripiegava a UNA PAGINA PER CHIAMATA:
+    dodici richieste al posto di una. E' successo davvero, quattro volte
+    in tre minuti, e ha bruciato oltre cento chiamate di quota.
+    """
+    sessione = FintaSessione(
+        FintaRisposta(
+            {"error": {"code": 503, "message": "This model is currently experiencing high demand."}},
+            status_code=503,
+        )
+    )
+    with pytest.raises(LimiteUsoRaggiunto) as errore:
+        gemini.BackendGemini(config, sessione).esegui(
+            Richiesta(sistema="s", istruzione="i", modello="m")
+        )
+    assert "occupato" in str(errore.value)
+    # E' transitorio: si aspetta e si ritenta lo stesso gruppo.
+    assert not errore.value.giornaliera
+    assert errore.value.attesa_s == gemini.ATTESA_SERVIZIO_OCCUPATO_S
+
+
+def test_un_500_qualunque_si_tratta_allo_stesso_modo(config, chiave):
+    sessione = FintaSessione(FintaRisposta({"error": {"code": 500}}, status_code=500))
+    with pytest.raises(LimiteUsoRaggiunto):
+        gemini.BackendGemini(config, sessione).esegui(
+            Richiesta(sistema="s", istruzione="i", modello="m")
+        )

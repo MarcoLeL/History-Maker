@@ -91,10 +91,75 @@ def _parser() -> argparse.ArgumentParser:
                    help="scrive il rapporto su file invece che a schermo")
 
     sotto.add_parser("dataset", help="fase 4: costruisce database, CSV e sintesi")
+
+    sotto.add_parser(
+        "genealogia",
+        help="fase 6: riconosce le persone e ricostruisce i legami familiari",
+    )
+
+    p = sotto.add_parser(
+        "ricostruisci",
+        help="fase 6b: la ricostruzione probabilistica, con le sue anomalie",
+    )
+    p.add_argument("--giri", type=int, default=None,
+                   help="quanti giri di riconciliazione al massimo")
+    p.add_argument("--senza-cache", action="store_true",
+                   help="rifa' i vicinati invece di riusarli (piu' lento)")
+
+    p = sotto.add_parser(
+        "dubbi",
+        help="la coda dei casi da guardare, in ordine di priorita'",
+    )
+    p.add_argument("--quanti", type=int, default=30, help="quanti casi mostrare")
+    p.add_argument("--tipo", default=None, help="solo le anomalie di questo tipo")
+
+    p = sotto.add_parser(
+        "verifica",
+        help="fase 6d: chiede all'immagine originale le parole decisive",
+    )
+    p.add_argument("--quante", type=int, default=30,
+                   help="quante domande fare al massimo")
+    p.add_argument("--elenca", action="store_true",
+                   help="mostra le domande che farebbe e si ferma")
+
+    p = sotto.add_parser(
+        "arbitra",
+        help="fase 6e: sottopone a un modello i casi che il calcolo non decide",
+    )
+    p.add_argument("--quanti", type=int, default=20, help="quanti casi sottoporre")
+    p.add_argument("--tipo", default=None,
+                   help="solo i casi di questo tipo, es. DUPLICATE_PERSON")
+    p.add_argument("--elenca", action="store_true",
+                   help="mostra i fascicoli che manderebbe e si ferma")
+    p.add_argument("--dividi", action="store_true",
+                   help="applica anche le divisioni chieste dal modello "
+                        "(misurate come dannose: vedi docs/ricostruzione.md)")
+
+    p = sotto.add_parser(
+        "decidi",
+        help="registra una decisione presa da te, che vale piu' del calcolo",
+    )
+    p.add_argument("azione", choices=["unione", "separazione", "disfa"],
+                   help="unire due schede, separarle, o disfare una decisione")
+    p.add_argument("chiavi", nargs="+",
+                   help="le due chiavi delle schede (il numero dopo la P), "
+                        "oppure il numero della decisione da disfare")
+    p.add_argument("--perche", required=True, help="il motivo, che resta scritto")
+
+    p = sotto.add_parser("albero", help="apre l'applicazione per navigare l'albero")
+    p.add_argument("--porta", type=int, default=8000, help="porta su cui servire")
+    p.add_argument("--senza-browser", action="store_true",
+                   help="non aprire il browser da solo")
     sotto.add_parser(
         "revisione",
         help="fase 5: segnala le letture probabilmente sbagliate (non consuma quota)",
     )
+    p = sotto.add_parser(
+        "qualita",
+        help="fase 7: conta cio' che nell'albero non puo' essere vero",
+    )
+    p.add_argument("--esempi", type=int, default=10,
+                   help="quanti casi mostrare per ogni controllo nel report")
     sotto.add_parser("stato", help="a che punto e' la pipeline")
     return parser
 
@@ -279,6 +344,226 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Sintesi:  {config.dataset / 'sintesi.md'}")
         return 0
 
+    if args.comando == "genealogia":
+        from history_maker import genealogia
+
+        percorso = genealogia.costruisci(config)
+        print(f"Database: {percorso}")
+        print(f"Sintesi:  {config.dataset / 'genealogia.md'}")
+        print(f"Da rivedere: {config.dataset / 'glossario-nomi-proposto.yaml'}")
+        return 0
+
+    if args.comando == "ricostruisci":
+        from history_maker.ricostruzione import esecuzione, risoluzione
+
+        percorso = esecuzione.costruisci(
+            config,
+            giri=args.giri or risoluzione.GIRI_MASSIMI,
+            senza_cache=args.senza_cache,
+        )
+        print(f"Database:  {percorso}")
+        print(f"Sintesi:   {config.dataset / 'ricostruzione.md'}")
+        print(f"Dubbi:     {config.dataset / 'anomalie.md'}")
+        print(
+            "\nLe anomalie non sono scarti: sono la coda di lavoro. "
+            "'python -m history_maker dubbi' la mostra in ordine."
+        )
+        return 0
+
+    if args.comando == "dubbi":
+        import sqlite3
+
+        percorso = config.dataset / "torrebruna.sqlite"
+        if not percorso.exists():
+            print(f"Manca {percorso}. Prima: python -m history_maker ricostruisci",
+                  file=sys.stderr)
+            return 2
+        conn = sqlite3.connect(f"file:{percorso}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            righe = list(conn.execute(
+                "SELECT tipo, descrizione, spiegazioni, confidenza, impatto, priorita "
+                "FROM anomalie WHERE stato = 'aperta' "
+                + ("AND tipo = ? " if args.tipo else "")
+                + "ORDER BY priorita DESC LIMIT ?",
+                ((args.tipo, args.quanti) if args.tipo else (args.quanti,)),
+            ))
+        except sqlite3.OperationalError:
+            print(
+                "Nessuna tabella 'anomalie': l'albero e' stato costruito con la\n"
+                "fase 6 vecchia. Rilancia con 'python -m history_maker ricostruisci'.",
+                file=sys.stderr,
+            )
+            return 2
+        for riga in righe:
+            print(f"[{riga['priorita']:.2f}] {riga['tipo']}")
+            print(f"  {riga['descrizione']}")
+            if riga["spiegazioni"]:
+                print(f"  possibili spiegazioni: {riga['spiegazioni']}")
+            print(f"  confidenza {riga['confidenza']:.0%}, impatto {riga['impatto']}")
+        totale = conn.execute(
+            "SELECT COUNT(*) FROM anomalie WHERE stato = 'aperta'"
+        ).fetchone()[0]
+        print(f"\n{len(righe)} casi mostrati su {totale} aperti.")
+        return 0
+
+    if args.comando == "decidi":
+        import sqlite3
+
+        from history_maker.ricostruzione import registro
+
+        percorso = config.dataset / "torrebruna.sqlite"
+        if not percorso.exists():
+            print(f"Manca {percorso}. Prima: python -m history_maker ricostruisci",
+                  file=sys.stderr)
+            return 2
+        conn = sqlite3.connect(percorso)
+        try:
+            if args.azione == "disfa":
+                numero = registro.disfa(conn, int(args.chiavi[0]), args.perche)
+                conn.commit()
+                print(
+                    f"Decisione {args.chiavi[0]} superata dalla {numero}. "
+                    f"La vecchia resta nel registro: un archivio in cui si\n"
+                    f"puo' riscrivere il passato non e' un archivio."
+                )
+                return 0
+            if len(args.chiavi) < 2:
+                print("Servono due chiavi.", file=sys.stderr)
+                return 2
+            numero = registro.annota(
+                conn, args.azione, [int(c) for c in args.chiavi[:2]],
+                args.perche, confidenza=1.0, decisore="persona",
+            )
+            conn.commit()
+        except (ValueError, sqlite3.OperationalError) as errore:
+            print(f"Non riesco a registrare la decisione: {errore}", file=sys.stderr)
+            return 2
+        finally:
+            conn.close()
+        print(
+            f"Decisione {numero} registrata.\n"
+            f"Vale dalla prossima ricostruzione: "
+            f"python -m history_maker ricostruisci"
+        )
+        return 0
+
+    if args.comando in ("verifica", "arbitra"):
+        import json
+        import sqlite3
+
+        from history_maker.ricostruzione import (
+            anomalie as coda_anomalie, arbitro, cache, contesto, esecuzione,
+            lettura, risoluzione, verifica as verifica_immagini,
+        )
+
+        percorso = config.dataset / "torrebruna.sqlite"
+        if not percorso.exists():
+            print(f"Manca {percorso}. Prima: python -m history_maker ricostruisci",
+                  file=sys.stderr)
+            return 2
+
+        # La ricostruzione si rifa' in memoria: e' l'unico modo di avere il
+        # grafo su cui ragionare, e costa qualche minuto contro una quota
+        # che non si ricompra. Le risposte gia' date restano in cache.
+        conn = sqlite3.connect(percorso)
+        deposito = cache.Deposito(config.dataset)
+        corpus = lettura.carica(conn, deposito)
+        esito = risoluzione.ricostruisci(corpus, deposito=deposito)
+        esito.anomalie.extend(coda_anomalie.tutte(esito))
+
+        if args.comando == "verifica":
+            domande = verifica_immagini.domande_da(
+                esito, esito.anomalie, quante=args.quante
+            )
+            if args.elenca or not domande:
+                for domanda in domande:
+                    print(f"[{domanda.priorita:.2f}] atto {domanda.atto} — "
+                          f"{domanda.domanda}")
+                    print(f"    {domanda.motivo}")
+                print(f"\n{len(domande)} domande.")
+                return 0
+            esiti = verifica_immagini.esegui(config, conn, domande)
+            conn.commit()
+            print(
+                f"Domande fatte: {esiti['fatte']}, riusate dalla cache: "
+                f"{esiti['riusate']}, fallite: {esiti['fallite']}."
+            )
+            if esiti["quota_esaurita"]:
+                print(
+                    "\nLa quota si e' esaurita. Le risposte gia' avute sono salvate:\n"
+                    "  rilancia lo stesso comando piu' tardi per riprendere."
+                )
+            return 0
+
+        casi = arbitro.casi(esito, args.quanti, args.tipo)
+        if args.elenca or not casi:
+            for anomalia in casi:
+                fascicolo = contesto.fascicolo(anomalia, esito)
+                print(json.dumps(fascicolo, ensure_ascii=False, indent=1))
+            print(f"\n{len(casi)} casi.")
+            return 0
+        gia_prese = len(esito.decisioni)
+        conteggi = arbitro.arbitra(
+            config, esito, quanti=args.quanti, deposito=deposito, tipo=args.tipo,
+            dividi=args.dividi,
+        )
+        # Le risposte si salvano **tutte**, anche quelle che non cambiano
+        # niente: e' il solo modo di poter dire, fra un mese, quante volte
+        # quel modello ha detto 'non deciso' e su che tipo di casi.
+        from history_maker.ricostruzione import registro
+
+        registro.salva(conn, esito.decisioni[gia_prese:])
+        conn.commit()
+        print(
+            f"Casi sottoposti: {conteggi['casi']}, risposte: {conteggi['risposte']}, "
+            f"applicate: {conteggi['applicate']}, riusate: {conteggi['riusate']}."
+        )
+        if conteggi["verifiche_chieste"]:
+            print(
+                f"{conteggi['verifiche_chieste']} casi chiedono di guardare "
+                f"l'immagine: python -m history_maker verifica"
+            )
+        print(
+            "\nLe decisioni prese sono nella tabella 'decisioni', con il modello\n"
+            "che le ha prese. Per vederle applicate all'albero rilancia\n"
+            "'python -m history_maker ricostruisci'."
+        )
+        return 0
+
+    if args.comando == "albero":
+        from history_maker import app
+
+        return app.avvia(config, porta=args.porta, apri=not args.senza_browser)
+
+    if args.comando == "qualita":
+        import sqlite3
+
+        from history_maker import qualita
+
+        percorso = config.dataset / "torrebruna.sqlite"
+        if not percorso.exists():
+            print(f"Manca {percorso}. Prima: python -m history_maker genealogia",
+                  file=sys.stderr)
+            return 2
+        conn = sqlite3.connect(f"file:{percorso}?mode=ro", uri=True)
+        report, esiti = qualita.scrivi_report(
+            conn, config.dataset / "qualita.md", esempi=args.esempi
+        )
+        totali = qualita.conteggi(esiti)
+        for esito in sorted(esiti, key=lambda e: -e.quanti):
+            if esito.quanti:
+                print(f"{esito.quanti:>6}  {esito.controllo.categoria:<15} "
+                      f"{esito.controllo.nome}")
+        print(
+            f"\n{totali.get('impossibile', 0)} cose impossibili, "
+            f"{totali.get('frammentazione', 0)} frammentazioni, "
+            f"{totali.get('accorpamento', 0)} accorpamenti, "
+            f"{totali.get('sospetto', 0)} letture da ricontrollare."
+            f"\nReport: {report}"
+        )
+        return 0
+
     if args.comando == "revisione":
         from history_maker import revisione
 
@@ -339,6 +624,24 @@ def _stato(config: Config) -> None:
 
     report = config.dataset / "revisione.md"
     print(f"5. revisione    {'fatta' if report.exists() else 'non ancora fatta'}")
+
+    if db.exists():
+        import sqlite3
+
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            persone = conn.execute("SELECT COUNT(*) FROM individui").fetchone()[0]
+            dubbi = conn.execute(
+                "SELECT COUNT(*) FROM anomalie WHERE stato = 'aperta'"
+            ).fetchone()[0]
+            print(f"6. albero       {persone} persone, {dubbi} dubbi aperti")
+        except sqlite3.OperationalError:
+            print("6. albero       non ancora ricostruito"
+                  "  ->  python -m history_maker ricostruisci")
+        finally:
+            conn.close()
+    else:
+        print("6. albero       non ancora ricostruito")
 
 
 if __name__ == "__main__":
