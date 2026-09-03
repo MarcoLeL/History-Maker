@@ -211,12 +211,13 @@ def esegui(
         corpus = lettura.carica(conn, deposito)
         esito = risoluzione.ricostruisci(corpus, deposito=deposito)
         esito.anomalie.extend(coda_anomalie.tutte(esito))
-        casi_disponibili = arbitro.casi(esito, casi_per_giro, tipo_arbitro)
+        esclusi = arbitro.gia_arbitrati(conn)
+        casi_disponibili = arbitro.casi(esito, casi_per_giro, tipo_arbitro, esclusi)
         if casi_disponibili:
             gia_prese = len(esito.decisioni)
             conteggi = arbitro.arbitra(
                 config_arbitro, esito, quanti=casi_per_giro, deposito=deposito,
-                tipo=tipo_arbitro, dividi=dividi_arbitro,
+                tipo=tipo_arbitro, dividi=dividi_arbitro, conn=conn,
             )
             registro.salva(conn, esito.decisioni[gia_prese:])
             conn.commit()

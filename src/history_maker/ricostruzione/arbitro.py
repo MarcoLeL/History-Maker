@@ -82,7 +82,9 @@ DA_ARBITRARE = (
 )
 
 
-def casi(esito, quanti: int, tipo: str | None = None) -> list[mod.Anomalia]:
+def casi(
+    esito, quanti: int, tipo: str | None = None, esclusi: set | None = None,
+) -> list[mod.Anomalia]:
     """I casi da sottoporre, in ordine di quanto conviene chiederli.
 
     ``tipo`` restringe a una categoria sola. Serve a misurare: le
@@ -90,24 +92,78 @@ def casi(esito, quanti: int, tipo: str | None = None) -> list[mod.Anomalia]:
     testa della coda, e senza poter chiedere **solo** i duplicati non si
     riesce a sapere quanto le risposte di un modello cambino la
     frammentazione.
+
+    ``esclusi`` sono le combinazioni di individui gia' sottoposte in
+    un'esecuzione precedente (vedi :func:`gia_arbitrati`). Senza,
+    rilanciare l'arbitro piu' volte nella stessa giornata — o dentro un
+    ciclo, come fa :mod:`ricostruzione.pipeline` — richiede sempre la
+    stessa testa della coda: una 'conferma' che non cambia la scheda non
+    la toglie dalla priorita', quindi il giro successivo la ritrova in
+    cima e non avanza mai verso i casi che stanno sotto. E' lo stesso
+    difetto, nello stesso punto, gia' trovato e corretto in
+    ``rilettura.casi``.
     """
     from history_maker.ricostruzione import anomalie as coda_anomalie
 
     ammessi = (tipo,) if tipo else DA_ARBITRARE
-    return [
+    candidati = [
         anomalia for anomalia in coda_anomalie.coda(esito)
         if anomalia.tipo in ammessi
-    ][:quanti]
+    ]
+    if esclusi:
+        candidati = [
+            a for a in candidati if frozenset(a.individui) not in esclusi
+        ]
+    return candidati[:quanti]
+
+
+def gia_arbitrati(conn) -> set:
+    """Le combinazioni di individui gia' sottoposte a un arbitro.
+
+    Rende un insieme di ``frozenset``, uno per decisione registrata da
+    ``decisore <> 'algoritmo'``: e' la stessa nozione di 'gia' deciso'
+    che usa ``registro.imposizioni``, letta qui per escludere invece che
+    per riapplicare. La tabella non distingue il tipo di anomalia che
+    aveva generato la domanda, ma non serve: una combinazione di persone
+    gia' sottoposta a giudizio non va richiesta due volte, qualunque sia
+    stata la ragione della prima volta.
+    """
+    import json
+    import sqlite3
+
+    esclusi = set()
+    try:
+        righe = conn.execute(
+            "SELECT entita FROM decisioni WHERE decisore <> 'algoritmo'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return esclusi
+    for riga in righe:
+        try:
+            individui = json.loads(riga[0])
+        except (TypeError, ValueError):
+            continue
+        if individui:
+            esclusi.add(frozenset(individui))
+    return esclusi
 
 
 def arbitra(
     config, esito, quanti: int = 30, deposito=None, applica: bool = True,
-    tipo: str | None = None, dividi: bool = DIVIDE_DI_DEFAULT,
+    tipo: str | None = None, dividi: bool = DIVIDE_DI_DEFAULT, conn=None,
 ) -> dict:
-    """Sottopone i casi ambigui e, se la risposta e' netta, la applica."""
+    """Sottopone i casi ambigui e, se la risposta e' netta, la applica.
+
+    ``conn``, se data, serve solo a leggere i casi gia' sottoposti in
+    esecuzioni precedenti (vedi :func:`gia_arbitrati`) e a non riproporli:
+    senza, una serie di esecuzioni — o un ciclo, come
+    :mod:`ricostruzione.pipeline` — richiede sempre la stessa testa della
+    coda invece di avanzare.
+    """
     from history_maker import backend as motori
 
-    da_fare = casi(esito, quanti, tipo)
+    esclusi = gia_arbitrati(conn) if conn is not None else None
+    da_fare = casi(esito, quanti, tipo, esclusi)
     if not da_fare:
         return {"casi": 0}
 

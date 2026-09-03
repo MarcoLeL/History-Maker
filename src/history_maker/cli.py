@@ -654,7 +654,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return 0
 
-        casi = arbitro.casi(esito, args.quanti, args.tipo)
+        esclusi_gia_arbitrati = arbitro.gia_arbitrati(conn)
+        casi = arbitro.casi(esito, args.quanti, args.tipo, esclusi_gia_arbitrati)
         if args.elenca or not casi:
             for anomalia in casi:
                 fascicolo = contesto.fascicolo(anomalia, esito)
@@ -664,7 +665,7 @@ def main(argv: list[str] | None = None) -> int:
         gia_prese = len(esito.decisioni)
         conteggi = arbitro.arbitra(
             config, esito, quanti=args.quanti, deposito=deposito, tipo=args.tipo,
-            dividi=args.dividi,
+            dividi=args.dividi, conn=conn,
         )
         # Le risposte si salvano **tutte**, anche quelle che non cambiano
         # niente: e' il solo modo di poter dire, fra un mese, quante volte
