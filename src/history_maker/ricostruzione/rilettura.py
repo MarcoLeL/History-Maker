@@ -63,8 +63,11 @@ logger = logging.getLogger(__name__)
 VERSIONE_PROMPT = "1.0.0"
 
 # Una difesa contro l'errore di battitura che manda in coda tremila
-# pagine. Non e' la quota — quella la tiene il backend.
-TETTO_PER_ESECUZIONE = 50
+# pagine. Non e' la quota — quella la tiene il backend — ed e' un tetto
+# largo apposta: deve stare sopra a qualunque '--quante' sensato, perche'
+# 'casi()' seleziona esattamente le pagine richieste e un tetto piu'
+# stretto qui le troncherebbe in silenzio senza che 'esegui' lo dica.
+TETTO_PER_ESECUZIONE = 500
 
 # Sotto questa confidenza una lettura diversa non diventa una correzione.
 # E' la stessa soglia di 'verifica', e per la stessa ragione: una
@@ -253,8 +256,25 @@ def casi(conn: sqlite3.Connection, quanti: int) -> list[int]:
     Rende identificatori di atto, non di anomalia: due dubbi sulla stessa
     pagina si sciolgono con una chiamata sola, e trattarli separatamente
     vorrebbe dire pagarla due volte.
+
+    Esclude gli atti gia' risposti. Senza, lanciare lo stesso comando su
+    un archivio con piu' pagine leggibili di quante ``TETTO_PER_ESECUZIONE``
+    ne esegua in un colpo resterebbe bloccato per sempre sulle stesse
+    prime pagine — ormai tutte in cache — senza mai avanzare verso le
+    successive. E' un difetto trovato eseguendo davvero il comando su un
+    lotto piu' grande del tetto, non leggendo il codice.
     """
     from collections import Counter
+
+    gia_risposte: set[int] = set()
+    try:
+        gia_risposte = {
+            riga["atto"] for riga in conn.execute(
+                "SELECT DISTINCT atto FROM riletture WHERE stato = 'risposta'"
+            )
+        }
+    except sqlite3.OperationalError:
+        pass        # la tabella non esiste ancora: nessuna pagina fatta
 
     segnaposto = ",".join("?" * len(TIPI_LEGGIBILI))
     scelti: dict[int, float] = {}
@@ -272,6 +292,8 @@ def casi(conn: sqlite3.Connection, quanti: int) -> list[int]:
         for atto in atti:
             if chi is not None and per_persona[chi] >= PAGINE_PER_PERSONA:
                 break
+            if atto in gia_risposte:
+                continue
             if atto in scelti:
                 # Una pagina con tre dubbi vale piu' di una con uno solo,
                 # ma non tre volte: il costo della chiamata e' lo stesso.

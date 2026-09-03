@@ -75,6 +75,46 @@ def test_una_pagina_con_tre_dubbi_si_paga_una_volta(conn):
     assert rilettura.casi(conn, 10) == [1]
 
 
+def test_una_pagina_gia_risposta_non_si_riseleziona(conn):
+    """Il bug trovato eseguendo davvero il comando su un lotto grande.
+
+    Senza questa esclusione, rilanciare 'rileggi' su un archivio con piu'
+    pagine leggibili di quante 'esegui' ne processi in un colpo restava
+    bloccato per sempre sulle stesse prime pagine — ormai tutte in
+    cache — invece di avanzare verso le successive.
+    """
+    for numero in range(1, 4):
+        atto(conn, numero)
+        anomalia(conn, "SURNAME_ANOMALY", [numero], [numero], priorita=float(4 - numero))
+    conn.executescript(rilettura.SCHEMA_TABELLA)
+    conn.execute(
+        "INSERT INTO riletture (chiave, atto, stato) VALUES ('x', 1, 'risposta')"
+    )
+    assert rilettura.casi(conn, 10) == [2, 3]
+
+
+def test_una_pagina_fallita_puo_essere_ritentata(conn):
+    """Solo le risposte vere tolgono una pagina dalla coda.
+
+    Un fallimento — un'immagine mancante, un ritaglio andato male — non
+    deve bloccare per sempre l'unica occasione di leggere quella pagina.
+    """
+    atto(conn, 1)
+    anomalia(conn, "SURNAME_ANOMALY", [1], [1])
+    conn.executescript(rilettura.SCHEMA_TABELLA)
+    conn.execute(
+        "INSERT INTO riletture (chiave, atto, stato) VALUES ('x', 1, 'fallita')"
+    )
+    assert rilettura.casi(conn, 10) == [1]
+
+
+def test_casi_regge_senza_la_tabella_riletture(conn):
+    """Il primissimo lancio, prima che la tabella esista."""
+    atto(conn, 1)
+    anomalia(conn, "SURNAME_ANOMALY", [1], [1])
+    assert rilettura.casi(conn, 10) == [1]
+
+
 def test_i_dubbi_di_identita_non_mandano_nessuno_all_immagine(conn):
     """La pagina dice cosa c'e' scritto, non chi era.
 
