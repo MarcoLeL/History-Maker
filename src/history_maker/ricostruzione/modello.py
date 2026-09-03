@@ -486,13 +486,18 @@ class Verifica:
 # facile.
 
 SCHEMA_SQL = """
-DROP TABLE IF EXISTS individui;
-DROP TABLE IF EXISTS menzioni;
-DROP TABLE IF EXISTS legami;
-DROP TABLE IF EXISTS unioni;
-DROP TABLE IF EXISTS individui_fts;
-DROP TABLE IF EXISTS fatti;
-DROP TABLE IF EXISTS anomalie;
+-- 'main.' come nell'altro motore, e per la stessa ragione: un nome non
+-- qualificato che in questo database non esiste ancora viene cercato nei
+-- database attaccati, e li' butterebbe il lavoro di qualcun altro. Qui
+-- oggi non c'e' niente di attaccato, ma la regola vale per costruzione:
+-- un DROP nudo in uno schema di questo progetto e' un errore in attesa.
+DROP TABLE IF EXISTS main.individui;
+DROP TABLE IF EXISTS main.menzioni;
+DROP TABLE IF EXISTS main.legami;
+DROP TABLE IF EXISTS main.unioni;
+DROP TABLE IF EXISTS main.individui_fts;
+DROP TABLE IF EXISTS main.fatti;
+DROP TABLE IF EXISTS main.anomalie;
 
 CREATE TABLE individui (
     id              INTEGER PRIMARY KEY,

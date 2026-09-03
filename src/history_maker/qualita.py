@@ -998,6 +998,76 @@ def analizza(conn: sqlite3.Connection) -> list[Esito]:
     return [Esito(controllo, controllo.trova(conn)) for controllo in CONTROLLI]
 
 
+# ---------------------------------------------------------------------------
+# Il collegamento: la frammentazione che nessun controllo vede
+# ---------------------------------------------------------------------------
+#
+# Tutto cio' che sta sopra conta **errori**. Ma l'errore piu' costoso di
+# questa ricostruzione non e' contabile in quel modo: una persona spezzata
+# in due schede non viola niente. Non produce un'assurdita', non
+# contraddice nessun atto — produce soltanto un albero con meno parentele
+# di quante l'archivio ne contenga, e chi guarda non ha modo di
+# accorgersene.
+#
+# Queste misure lo guardano dal verso opposto: invece di contare cio' che
+# e' rotto, contano **quanto l'albero tiene**. Quanti bambini nati qui
+# l'archivio ritrova da adulti, quante vite si chiudono fra la nascita e
+# la morte, quante generazioni si tengono in fila. Se una modifica al
+# riconoscimento le fa salire senza far salire gli impossibili, ha
+# funzionato; se le fa scendere, ha spezzato qualcosa anche quando tutti
+# gli altri numeri migliorano.
+#
+# Vanno lette **insieme** ai controlli, mai da sole. Un sistema che
+# fonde tutto con tutto le porta al massimo e produce un albero falso.
+
+# Gli anni dopo i quali un bambino ritrovato e' un bambino ritrovato
+# *da adulto*. La misura e' insensibile alla soglia — fra dieci e
+# ventun anni il conto si muove del 10% — e questo e' il motivo per cui
+# ci si puo' fidare: non sta misurando la soglia, sta misurando i
+# collegamenti.
+ETA_ADULTA = 18
+
+COLLEGAMENTO: dict[str, str] = {
+    "persone riconosciute":
+        "SELECT COUNT(*) FROM individui",
+    "che si reggono su una menzione sola":
+        "SELECT COUNT(*) FROM individui WHERE menzioni = 1",
+    "con atto di nascita":
+        "SELECT COUNT(*) FROM individui WHERE nascita_origine = 'certa'",
+    "nati qui e ritrovati almeno una volta":
+        "SELECT COUNT(*) FROM individui "
+        "WHERE nascita_origine = 'certa' AND menzioni > 1",
+    "nati qui e ritrovati da adulti":
+        f"SELECT COUNT(*) FROM individui WHERE nascita_origine = 'certa' "
+        f"AND anno_ultimo - anno_nascita >= {ETA_ADULTA}",
+    "nati qui di cui si conoscono i figli":
+        "SELECT COUNT(*) FROM individui i WHERE i.nascita_origine = 'certa' "
+        "AND EXISTS (SELECT 1 FROM legami l WHERE l.genitore = i.id)",
+    "morti di cui si conosce anche la nascita":
+        "SELECT COUNT(*) FROM individui "
+        "WHERE anno_morte IS NOT NULL AND nascita_origine = 'certa'",
+    "persone di cui si conoscono i genitori":
+        "SELECT COUNT(DISTINCT figlio) FROM legami",
+    "persone di cui si conoscono i figli":
+        "SELECT COUNT(DISTINCT genitore) FROM legami",
+    "catene nonno-genitore-figlio":
+        "SELECT COUNT(*) FROM legami nipote "
+        "JOIN legami figlio ON figlio.figlio = nipote.genitore",
+    "coppie":
+        "SELECT COUNT(*) FROM unioni",
+    "coppie con atto di matrimonio":
+        "SELECT COUNT(*) FROM unioni WHERE origine = 'matrimonio'",
+}
+
+
+def collegamento(conn: sqlite3.Connection) -> dict[str, int]:
+    """Quanto l'albero tiene insieme le vite, misura per misura."""
+    return {
+        voce: conn.execute(sql).fetchone()[0]
+        for voce, sql in COLLEGAMENTO.items()
+    }
+
+
 def conteggi(esiti: list[Esito]) -> dict[str, int]:
     totali: dict[str, int] = defaultdict(int)
     for esito in esiti:

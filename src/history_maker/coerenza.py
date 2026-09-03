@@ -39,7 +39,10 @@ from history_maker import qualita
 logger = logging.getLogger(__name__)
 
 SCHEMA_SQL = """
-DROP TABLE IF EXISTS scartati;
+-- Qualificato con 'main.' come tutti i DROP dei motori: la fase 4 e'
+-- attaccata, e un nome nudo che qui non esiste ancora finirebbe per
+-- cercarla la'. Vedi 'affiancate.collega_fase_4'.
+DROP TABLE IF EXISTS main.scartati;
 
 -- Cio' che la ricostruzione aveva concluso e che si e' dovuto togliere
 -- perche' rendeva l'albero impossibile. E' la memoria delle correzioni:

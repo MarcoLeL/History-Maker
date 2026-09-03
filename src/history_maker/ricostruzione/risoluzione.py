@@ -50,7 +50,6 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from history_maker import identita
 from history_maker.ricostruzione import candidati, evidenza, modello as mod
 from history_maker.ricostruzione.evidenza import Modello
 from history_maker.ricostruzione.scheda import Scheda

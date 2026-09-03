@@ -4,12 +4,17 @@ Prende cio' che :mod:`identita` ha riconosciuto e lo scrive in tabelle
 che si possano interrogare: **chi e' figlio di chi**, **chi ha sposato
 chi**, e per ogni persona tutto quello che i registri dicono di lei.
 
-Le tabelle nuove stanno nello stesso database delle altre e si buttano e
-si rifanno a ogni esecuzione. E' voluto: la fase 4 puo' crescere — domani
-arrivano gli anni che mancano — e questa fase deve poter ripartire da
-capo sui dati nuovi senza portarsi dietro niente di vecchio. Nessuna
-tabella della fase 4 viene toccata: se qualcosa qui e' sbagliato, si
-cancella e si rifa'.
+Le tabelle nuove si buttano e si rifanno a ogni esecuzione. E' voluto: la
+fase 4 puo' crescere — domani arrivano gli anni che mancano — e questa
+fase deve poter ripartire da capo sui dati nuovi senza portarsi dietro
+niente di vecchio. Nessuna tabella della fase 4 viene toccata: se
+qualcosa qui e' sbagliato, si cancella e si rifa'.
+
+Stanno pero' in un **database proprio**, ``torrebruna-v1.sqlite``, e non
+in quello principale. Questa fase e ``ricostruisci`` usano gli stessi
+nomi di tabella, quindi finche' hanno condiviso il file ciascuna
+distruggeva il lavoro dell'altra. Ora convivono, e si possono confrontare
+sugli stessi dati: ``python -m history_maker confronta-ricostruzioni``.
 
 Sulle unioni vale la pena dire una cosa che non e' ovvia. Gli atti di
 matrimonio superstiti sono 678; le coppie che si ricavano dagli atti di
@@ -30,18 +35,24 @@ import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from history_maker import identita, nomi, normalizza, paleografia
+from history_maker import affiancate, identita, nomi, normalizza, paleografia
 from history_maker.config import Config
 
 logger = logging.getLogger(__name__)
 
 
 SCHEMA_SQL = """
-DROP TABLE IF EXISTS individui;
-DROP TABLE IF EXISTS menzioni;
-DROP TABLE IF EXISTS legami;
-DROP TABLE IF EXISTS unioni;
-DROP TABLE IF EXISTS individui_fts;
+-- 'main.' non e' pignoleria. Questa fase lavora su un database a cui la
+-- fase 4 sta attaccata, e SQLite risolve un nome non qualificato
+-- cercandolo prima in 'main' e poi nei database attaccati: al primo
+-- avvio, quando 'individui' qui non c'e' ancora, un DROP nudo scende nel
+-- database principale e butta la ricostruzione dell'altro motore. Senza
+-- un errore. Vedi 'affiancate.collega_fase_4'.
+DROP TABLE IF EXISTS main.individui;
+DROP TABLE IF EXISTS main.menzioni;
+DROP TABLE IF EXISTS main.legami;
+DROP TABLE IF EXISTS main.unioni;
+DROP TABLE IF EXISTS main.individui_fts;
 
 -- Una persona vera, cioe' un gruppo di menzioni riconosciute come la
 -- stessa. 'menzioni' dice su quante righe si regge: una persona da
@@ -124,16 +135,18 @@ CREATE VIRTUAL TABLE individui_fts USING fts5(
 
 
 def costruisci(config: Config) -> Path:
-    """Ricostruisce da zero l'albero genealogico dal dataset della fase 4."""
-    percorso = config.dataset / "torrebruna.sqlite"
-    if not percorso.exists():
-        raise FileNotFoundError(
-            f"manca {percorso}: prima va costruito il dataset "
-            f"(python -m history_maker dataset)"
-        )
+    """Ricostruisce da zero l'albero genealogico dal dataset della fase 4.
 
-    conn = sqlite3.connect(percorso)
-    conn.row_factory = sqlite3.Row
+    Scrive nel **database della V1**, non in quello principale. Le due
+    fasi 6 usano le stesse tabelle con gli stessi nomi, e finche' hanno
+    condiviso il file ciascuna buttava il lavoro dell'altra: eseguire
+    questa dopo ``ricostruisci`` lasciava trecentomila fatti a puntare a
+    individui rinumerati da zero, senza un errore che lo dicesse. La
+    fase 4 resta dov'e' ed e' attaccata in lettura — vedi
+    :mod:`history_maker.affiancate`.
+    """
+    percorso = affiancate.percorso(config, "v1")
+    conn = affiancate.apri(config, "v1")
 
     logger.info("igiene dei nomi...")
     righe = list(conn.execute("SELECT id, atto, ruolo, nome, cognome FROM persone"))

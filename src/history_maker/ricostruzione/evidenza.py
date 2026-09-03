@@ -54,7 +54,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass, field
 
-from history_maker import identita, nomi, paleografia
+from history_maker import menzioni as lettura_atti, nomi, paleografia
 from history_maker.ricostruzione import modello as mod_dati
 from history_maker.ricostruzione.modello import Evidenza
 from history_maker.ricostruzione.scheda import Scheda, principali
@@ -776,7 +776,7 @@ class Modello:
         migliore, coppia = 0.0, ("", "")
         for mia in sorted(mie):
             for sua in sorted(sue):
-                if identita._chiavi_vicine(mia, sua):
+                if lettura_atti.chiavi_vicine(mia, sua):
                     return (
                         self.peso_token(mia, frequenze, m * 0.5, tetto),
                         f"{etichetta} simile {mia.replace('|', ' ')}",

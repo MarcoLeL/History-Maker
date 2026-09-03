@@ -160,6 +160,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--esempi", type=int, default=10,
                    help="quanti casi mostrare per ogni controllo nel report")
+    p.add_argument("--motore", default="v2", choices=["v1", "v2"],
+                   help="quale ricostruzione misurare: v1 = 'genealogia', "
+                        "v2 = 'ricostruisci' (default)")
+
+    sotto.add_parser(
+        "confronta-ricostruzioni",
+        help="mette la vecchia fase 6 e la nuova fianco a fianco (non consuma quota)",
+    )
     sotto.add_parser("stato", help="a che punto e' la pipeline")
     return parser
 
@@ -537,18 +545,26 @@ def main(argv: list[str] | None = None) -> int:
         return app.avvia(config, porta=args.porta, apri=not args.senza_browser)
 
     if args.comando == "qualita":
-        import sqlite3
+        from history_maker import affiancate, qualita
 
-        from history_maker import qualita
-
-        percorso = config.dataset / "torrebruna.sqlite"
-        if not percorso.exists():
-            print(f"Manca {percorso}. Prima: python -m history_maker genealogia",
-                  file=sys.stderr)
+        try:
+            conn = affiancate.apri(config, args.motore, sola_lettura=True)
+        except FileNotFoundError as exc:
+            print(exc, file=sys.stderr)
             return 2
-        conn = sqlite3.connect(f"file:{percorso}?mode=ro", uri=True)
+        if not affiancate.ricostruita(conn):
+            quale = "genealogia" if args.motore == "v1" else "ricostruisci"
+            print(f"Nessuna ricostruzione '{args.motore}' da misurare. "
+                  f"Prima: python -m history_maker {quale}", file=sys.stderr)
+            return 2
+        # Il report della V1 sta accanto al suo database, non sopra quello
+        # della V2: misurare l'altro motore non deve sovrascrivere il
+        # rapporto di quello che si sta usando.
+        destinazione = config.dataset / (
+            "qualita.md" if args.motore == "v2" else f"qualita-{args.motore}.md"
+        )
         report, esiti = qualita.scrivi_report(
-            conn, config.dataset / "qualita.md", esempi=args.esempi
+            conn, destinazione, esempi=args.esempi
         )
         totali = qualita.conteggi(esiti)
         for esito in sorted(esiti, key=lambda e: -e.quanti):
@@ -562,6 +578,20 @@ def main(argv: list[str] | None = None) -> int:
             f"{totali.get('sospetto', 0)} letture da ricontrollare."
             f"\nReport: {report}"
         )
+        return 0
+
+    if args.comando == "confronta-ricostruzioni":
+        from history_maker import affiancate
+
+        try:
+            rapporto = affiancate.confronta(config)
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        destinazione = config.dataset / "confronto-ricostruzioni.md"
+        destinazione.write_text(rapporto, encoding="utf-8")
+        print(rapporto)
+        print(f"Rapporto: {destinazione}")
         return 0
 
     if args.comando == "revisione":

@@ -31,7 +31,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass, field
 
-from history_maker import identita, nomi, paleografia
+from history_maker import menzioni as lettura_atti, nomi, paleografia
 from history_maker.ricostruzione import modello
 
 # I ruoli da cui il sesso si sa senza margine di dubbio: una madre e' una
@@ -326,7 +326,7 @@ class Scheda:
 
         if (
             menzione.tipo_atto == "nascita"
-            and menzione.ruolo in identita.GENITORI
+            and menzione.ruolo in lettura_atti.GENITORI
             and menzione.anno
         ):
             self.parti.append(menzione.anno)

@@ -51,7 +51,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from history_maker import identita, nomi, paleografia
+from history_maker import menzioni as lettura_atti, nomi, paleografia
 from history_maker.ricostruzione import modello
 
 logger = logging.getLogger(__name__)
@@ -261,7 +261,7 @@ class Interprete:
     # intervento silenzioso su quarantamila righe non e' verificabile.
     conteggi: Counter[str] = field(default_factory=Counter)
 
-    def __call__(self, menzione: identita.Menzione) -> None:
+    def __call__(self, menzione: lettura_atti.Menzione) -> None:
         self._applica_correzioni(menzione)
         nome, alternative_nome = separa_alternative(menzione.nome)
         cognome, alternative_cognome = separa_alternative(menzione.cognome)
@@ -287,7 +287,7 @@ class Interprete:
         menzione.alternative_nome = alternative_nome
         menzione.alternative_cognome = alternative_cognome
 
-    def _applica_correzioni(self, menzione: identita.Menzione) -> None:
+    def _applica_correzioni(self, menzione: lettura_atti.Menzione) -> None:
         """Rimette nel dato cio' che l'immagine ha detto.
 
         E' il ritorno della verifica mirata: senza, una risposta
@@ -318,9 +318,9 @@ class Corpus:
     Pelliccia" non si puo' decidere a tavolino, si legge qui.
     """
 
-    menzioni: list[identita.Menzione]
-    per_id: dict[int, identita.Menzione]
-    per_atto: dict[int, list[identita.Menzione]]
+    menzioni: list[lettura_atti.Menzione]
+    per_id: dict[int, lettura_atti.Menzione]
+    per_atto: dict[int, list[lettura_atti.Menzione]]
     frequenze_cognome: Counter[str]
     frequenze_nome: Counter[str]
     frequenze_parte_nome: Counter[str]
@@ -346,7 +346,7 @@ class Corpus:
         return Chiavi(self.per_id, self.vocabolari)
 
 
-class Chiavi(identita.ChiaviFamiliari):
+class Chiavi(lettura_atti.ChiaviFamiliari):
     """Tutto cio' che serve a una scheda per leggere una menzione.
 
     Le chiavi di parentela — 'il padre di questa riga e' quella li' — piu'
@@ -426,11 +426,11 @@ def carica(
     correzioni, _proposte = nomi.correzioni_dei_nomi([r["nome"] for r in righe], genere)
 
     interprete = Interprete(bilancia, corrette=corrette)
-    menzioni = identita.carica_menzioni(
+    menzioni = lettura_atti.carica_menzioni(
         conn, correzioni, genere, scambi, interpreta=interprete
     )
 
-    per_atto: dict[int, list[identita.Menzione]] = defaultdict(list)
+    per_atto: dict[int, list[lettura_atti.Menzione]] = defaultdict(list)
     for menzione in menzioni:
         per_atto[menzione.atto].append(menzione)
 
@@ -541,7 +541,7 @@ def _conta(valori) -> Counter[str]:
 
 
 def fatti_dalla_menzione(
-    menzione: identita.Menzione, individuo: int, vocabolari: dict | None = None
+    menzione: lettura_atti.Menzione, individuo: int, vocabolari: dict | None = None
 ) -> list[modello.Fatto]:
     """I fatti documentari che una riga afferma, uno per campo.
 
