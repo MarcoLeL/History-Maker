@@ -183,6 +183,16 @@ def _parser() -> argparse.ArgumentParser:
         "confronta-ricostruzioni",
         help="mette la vecchia fase 6 e la nuova fianco a fianco (non consuma quota)",
     )
+
+    p = sotto.add_parser(
+        "archivia-decisioni",
+        help="sposta le decisioni dell'algoritmo delle esecuzioni piu' vecchie",
+    )
+    p.add_argument("--tieni", type=int, default=None,
+                   help="quante esecuzioni tenere nella tabella calda (default 2)")
+    p.add_argument("--a-secco", action="store_true",
+                   help="conta quanto sposterebbe, senza spostare niente")
+
     sotto.add_parser("stato", help="a che punto e' la pipeline")
     return parser
 
@@ -666,6 +676,35 @@ def main(argv: list[str] | None = None) -> int:
         destinazione.write_text(rapporto, encoding="utf-8")
         print(rapporto)
         print(f"Rapporto: {destinazione}")
+        return 0
+
+    if args.comando == "archivia-decisioni":
+        import sqlite3
+
+        from history_maker.ricostruzione import registro
+
+        percorso = config.dataset / "torrebruna.sqlite"
+        if not percorso.exists():
+            print(f"Manca {percorso}. Prima: python -m history_maker ricostruisci",
+                  file=sys.stderr)
+            return 2
+        conn = sqlite3.connect(percorso)
+        kwargs = {"a_secco": args.a_secco}
+        if args.tieni is not None:
+            kwargs["tieni_ultime"] = args.tieni
+        esiti = registro.archivia(conn, **kwargs)
+        if not args.a_secco:
+            conn.commit()
+        conn.close()
+        print(
+            f"{esiti['esecuzioni_trovate']} esecuzioni distinte nella tabella. "
+        )
+        if args.a_secco:
+            print(f"Sposterebbe {esiti.get('archiviabili', 0)} decisioni "
+                  f"algoritmiche in decisioni_archivio (nessuna toccata).")
+        else:
+            print(f"{esiti['archiviate']} decisioni algoritmiche spostate "
+                  f"in decisioni_archivio.")
         return 0
 
     if args.comando == "revisione":

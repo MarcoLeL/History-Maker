@@ -653,6 +653,10 @@ CREATE INDEX idx_unioni_moglie   ON unioni(moglie);
 CREATE INDEX idx_ind_cognome     ON individui(cognome);
 CREATE INDEX idx_ind_nome        ON individui(nome);
 CREATE INDEX IF NOT EXISTS idx_decisioni_azione ON decisioni(azione);
+-- 'imposizioni' e 'correzioni' filtrano su decisore <> 'algoritmo', che
+-- scarta 131.645 righe su 134.100 nell'archivio vero: senza un indice
+-- ogni chiamata scansiona la tabella intera per trovarne 116.
+CREATE INDEX IF NOT EXISTS idx_decisioni_decisore ON decisioni(decisore);
 CREATE INDEX IF NOT EXISTS idx_verifiche_stato ON verifiche(stato, priorita DESC);
 
 CREATE VIRTUAL TABLE individui_fts USING fts5(
