@@ -121,6 +121,11 @@ def _parser() -> argparse.ArgumentParser:
                    help="quante domande fare al massimo")
     p.add_argument("--elenca", action="store_true",
                    help="mostra le domande che farebbe e si ferma")
+    p.add_argument("--backend", default=None, choices=["gemini", "claude-code"],
+                   help="motore per questa esecuzione (default: dal file di "
+                        "configurazione)")
+    p.add_argument("--modello", default=None,
+                   help="modello del backend scelto, per questa esecuzione")
 
     p = sotto.add_parser(
         "rileggi",
@@ -136,6 +141,12 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--contesto", action="store_true",
                    help="con --elenca, stampa il contesto per intero invece "
                         "del riassunto")
+    p.add_argument("--backend", default=None, choices=["gemini", "claude-code"],
+                   help="motore per questa esecuzione (default: dal file di "
+                        "configurazione). La rilettura legge un'immagine: "
+                        "resta Gemini, di norma.")
+    p.add_argument("--modello", default=None,
+                   help="modello del backend scelto, per questa esecuzione")
 
     p = sotto.add_parser(
         "arbitra",
@@ -146,6 +157,14 @@ def _parser() -> argparse.ArgumentParser:
                    help="solo i casi di questo tipo, es. DUPLICATE_PERSON")
     p.add_argument("--elenca", action="store_true",
                    help="mostra i fascicoli che manderebbe e si ferma")
+    p.add_argument("--backend", default=None, choices=["gemini", "claude-code"],
+                   help="motore per questa esecuzione (default: dal file di "
+                        "configurazione). L'arbitrato e' ragionamento su "
+                        "testo, non lettura di un'immagine: e' il posto "
+                        "giusto per 'claude-code', anche quando le "
+                        "trascrizioni usano Gemini.")
+    p.add_argument("--modello", default=None,
+                   help="modello del backend scelto, per questa esecuzione")
     p.add_argument("--dividi", action="store_true",
                    help="applica anche le divisioni chieste dal modello "
                         "(misurate come dannose: vedi docs/ricostruzione.md)")
@@ -183,6 +202,33 @@ def _parser() -> argparse.ArgumentParser:
         "confronta-ricostruzioni",
         help="mette la vecchia fase 6 e la nuova fianco a fianco (non consuma quota)",
     )
+
+    p = sotto.add_parser(
+        "pipeline",
+        help="fase 6g: ricostruisci, rileggi e arbitra in ciclo, finche' "
+             "un giro non produce piu' niente",
+    )
+    p.add_argument("--giri", type=int, default=None,
+                   help="quanti giri al massimo (default 20)")
+    p.add_argument("--pagine-per-giro", type=int, default=None,
+                   help="quante pagine rileggere per giro (default 40)")
+    p.add_argument("--casi-per-giro", type=int, default=None,
+                   help="quanti casi sottoporre all'arbitro per giro (default 15)")
+    p.add_argument("--tipo-arbitro", default=None,
+                   help="solo i casi di questo tipo per l'arbitro, "
+                        "es. DUPLICATE_PERSON")
+    p.add_argument("--dividi", action="store_true",
+                   help="applica anche le divisioni chieste dall'arbitro "
+                        "(misurate come dannose in aggregato: vedi "
+                        "docs/ricostruzione.md)")
+    p.add_argument("--backend-arbitro", default=None,
+                   choices=["gemini", "claude-code"],
+                   help="motore per l'arbitrato (default: dal file di "
+                        "configurazione). L'arbitrato ragiona su testo: "
+                        "'claude-code' e' il posto per cui e' pensato, "
+                        "anche quando le trascrizioni usano Gemini.")
+    p.add_argument("--modello-arbitro", default=None,
+                   help="modello del backend scelto per l'arbitrato")
 
     p = sotto.add_parser(
         "archivia-decisioni",
@@ -487,6 +533,16 @@ def main(argv: list[str] | None = None) -> int:
 
         from history_maker.ricostruzione import rilettura
 
+        if args.backend or args.modello:
+            modifiche = {}
+            if args.backend:
+                modifiche["backend"] = args.backend
+            if args.modello:
+                modifiche["modello"] = args.modello
+            config = dataclasses.replace(
+                config, trascrizione=dataclasses.replace(config.trascrizione, **modifiche)
+            )
+
         percorso = config.dataset / "torrebruna.sqlite"
         if not percorso.exists():
             print(f"Manca {percorso}. Prima: python -m history_maker ricostruisci",
@@ -548,6 +604,16 @@ def main(argv: list[str] | None = None) -> int:
             anomalie as coda_anomalie, arbitro, cache, contesto, esecuzione,
             lettura, risoluzione, verifica as verifica_immagini,
         )
+
+        if args.backend or args.modello:
+            modifiche = {}
+            if args.backend:
+                modifiche["backend"] = args.backend
+            if args.modello:
+                modifiche["modello"] = args.modello
+            config = dataclasses.replace(
+                config, trascrizione=dataclasses.replace(config.trascrizione, **modifiche)
+            )
 
         percorso = config.dataset / "torrebruna.sqlite"
         if not percorso.exists():
@@ -705,6 +771,66 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"{esiti['archiviate']} decisioni algoritmiche spostate "
                   f"in decisioni_archivio.")
+        return 0
+
+    if args.comando == "pipeline":
+        from history_maker.ricostruzione import pipeline
+
+        config_arbitro = config
+        if args.backend_arbitro or args.modello_arbitro:
+            modifiche = {}
+            if args.backend_arbitro:
+                modifiche["backend"] = args.backend_arbitro
+            if args.modello_arbitro:
+                modifiche["modello"] = args.modello_arbitro
+            config_arbitro = dataclasses.replace(
+                config, trascrizione=dataclasses.replace(config.trascrizione, **modifiche)
+            )
+
+        kwargs = {}
+        if args.giri is not None:
+            kwargs["giri_massimi"] = args.giri
+        if args.pagine_per_giro is not None:
+            kwargs["pagine_per_giro"] = args.pagine_per_giro
+        if args.casi_per_giro is not None:
+            kwargs["casi_per_giro"] = args.casi_per_giro
+
+        def stampa_giro(giro):
+            print(
+                f"giro {giro.numero}: {giro.correzioni_lettura} correzioni "
+                f"({giro.conflitti_col_contesto} conflitti col contesto), "
+                f"{giro.decisioni_arbitro} decisioni dell'arbitro "
+                f"({giro.divisioni_proposte} divisioni proposte) — "
+                f"{giro.schede_dopo} schede, {giro.impossibili} impossibili, "
+                f"{giro.frammentazioni} frammentazioni, "
+                f"{giro.accorpamenti} accorpamenti"
+            )
+            if giro.pagine_fallite:
+                print(f"    {giro.pagine_fallite} pagine fallite nella lettura")
+            if giro.fermo_per_quota:
+                print("    quota esaurita in questo giro")
+
+        try:
+            storia = pipeline.esegui(
+                config, tipo_arbitro=args.tipo_arbitro, dividi_arbitro=args.dividi,
+                config_arbitro=config_arbitro, su_giro=stampa_giro, **kwargs
+            )
+        except FileNotFoundError as errore:
+            print(errore, file=sys.stderr)
+            return 2
+
+        destinazione = config.dataset / "pipeline.md"
+        destinazione.write_text(pipeline.rapporto(storia), encoding="utf-8")
+        print(f"\nRapporto: {destinazione}")
+        if storia:
+            motivo = pipeline.convergenza(storia)
+            if motivo:
+                print(motivo)
+            elif storia[-1].fermo_per_quota:
+                print(
+                    "Fermato per quota esaurita, non per convergenza: "
+                    "rilanciare lo stesso comando piu' tardi riprende da qui."
+                )
         return 0
 
     if args.comando == "revisione":

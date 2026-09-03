@@ -232,9 +232,19 @@ def _esegui_con(comando: list[str], prompt: str, timeout: int) -> Esito:
         grezzo=risposta,
     )
     if not esito.ok:
-        esito.errore = risposta.get("subtype") or "esito non riuscito"
-        if _sembra_limite(esito.testo):
-            raise LimiteUsoRaggiunto(esito.testo)
+        # 'subtype' non e' un messaggio d'errore: e' il tipo di
+        # conclusione della sessione, e su un turno fallito puo' restare
+        # 'success' — il caso vero e' un modello inesistente ('claude
+        # --model gemini-3.5-flash-lite' risponde cosi', con
+        # is_error=true e subtype='success' insieme). Il messaggio utile
+        # sta in 'result': e' li' che l'eseguibile spiega cosa e'
+        # andato storto. 'subtype' resta l'ultima spiaggia, per non
+        # restituire mai una stringa vuota.
+        esito.errore = (
+            risposta.get("result") or risposta.get("subtype") or "esito non riuscito"
+        )
+        if _sembra_limite(esito.testo) or _sembra_limite(esito.errore):
+            raise LimiteUsoRaggiunto(esito.errore)
     return esito
 
 

@@ -162,10 +162,34 @@ def test_esecuzione_riuscita(finto_claude, tmp_path):
 
 
 def test_esecuzione_fallita_non_solleva(finto_claude, tmp_path):
-    """Un errore normale torna come esito negativo, non come eccezione."""
+    """Un errore normale torna come esito negativo, non come eccezione.
+
+    Il messaggio viene da 'result', non da 'subtype': 'subtype' e' il
+    tipo di conclusione della sessione, non una spiegazione, e su un
+    turno fallito puo' restare 'success' — vedi il test sotto.
+    """
     finto_claude("qualcosa e' andato storto", is_error=True, subtype="error_during_execution")
     esito = claudecode.esegui("p", "s", [tmp_path], "claude-opus-5", timeout=30)
-    assert not esito.ok and esito.errore == "error_during_execution"
+    assert not esito.ok and esito.errore == "qualcosa e' andato storto"
+
+
+def test_il_messaggio_non_viene_da_subtype_quando_dice_successo(finto_claude, tmp_path):
+    """Il caso vero che ha reso questa distinzione necessaria.
+
+    Un modello inesistente ('claude --model gemini-3.5-flash-lite') fa
+    fallire il turno con is_error=true, ma la sessione si conclude
+    comunque con subtype='success': prendere 'subtype' come messaggio
+    d'errore avrebbe detto 'success' su un fallimento vero.
+    """
+    finto_claude(
+        "There's an issue with the selected model (gemini-3.5-flash-lite). "
+        "It may not exist or you may not have access to it.",
+        is_error=True, subtype="success",
+    )
+    esito = claudecode.esegui("p", "s", [tmp_path], "gemini-3.5-flash-lite", timeout=30)
+    assert not esito.ok
+    assert esito.errore != "success"
+    assert "gemini-3.5-flash-lite" in esito.errore
 
 
 def test_quota_esaurita_solleva(finto_claude, tmp_path):
