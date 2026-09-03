@@ -1,1 +1,17 @@
+# I dati: immagini, trascrizioni, database, cache. Sono gigabyte e si
+# riproducono con la pipeline; il repository tiene il codice che li fa.
 /data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Strumenti. '.idea/' NON sta qui: le configurazioni di PyCharm sono
+# versionate di proposito (vedi docs/prima-esecuzione.md), cosi' chi apre
+# il progetto nell'IDE trova l'interprete e i comandi gia' pronti.
+.pytest_cache/
+
+# File di lavoro sparsi nella radice (scr_*.pkl, scr_*.json)
+/scr_*
