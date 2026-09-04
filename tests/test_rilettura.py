@@ -36,6 +36,13 @@ def atto(conn, id, anno=1831, immagine=None):
     )
 
 
+def persona(conn, id, atto_id, ruolo="defunto"):
+    conn.execute(
+        "INSERT INTO persone (id, atto, ruolo, nome, cognome) VALUES (?,?,?,?,?)",
+        (id, atto_id, ruolo, "Nome", "Cognome"),
+    )
+
+
 def anomalia(conn, tipo, individui, atti, priorita=1.0, confidenza=0.6):
     conn.execute(
         "INSERT INTO anomalie (tipo, individui, atti, campo, descrizione, "
@@ -115,6 +122,51 @@ def test_casi_regge_senza_la_tabella_riletture(conn):
     assert rilettura.casi(conn, 10) == [1]
 
 
+# --- la rilettura ampia: ogni pagina, non solo quelle segnalate -----------
+
+def test_tutti_gli_atti_prende_ogni_pagina_non_ancora_fatta(conn):
+    """Senza nessuna anomalia: e' proprio il punto.
+
+    Il caso che l'ha resa necessaria — Pietrangelo Morella, quasi
+    certamente un Moretta come tutta la sua famiglia — non aveva mai
+    generato un'anomalia, perche' l'atto e il padre dichiarato erano
+    d'accordo sulla stessa grafia. 'casi()' non l'avrebbe mai trovato;
+    questa si'.
+    """
+    for numero, anno in ((1, 1810), (2, 1820), (3, 1815)):
+        atto(conn, numero, anno=anno)
+        persona(conn, numero, numero)
+    assert rilettura.tutti_gli_atti(conn, 10) == [1, 3, 2]   # per anno
+
+
+def test_tutti_gli_atti_esclude_le_pagine_gia_risposte(conn):
+    """Stessa esclusione di 'casi()': altrimenti la coda non avanza."""
+    atto(conn, 1, anno=1810)
+    persona(conn, 1, 1)
+    atto(conn, 2, anno=1811)
+    persona(conn, 2, 2)
+    conn.execute(
+        "INSERT INTO riletture (chiave, atto, stato) VALUES ('x', 1, 'risposta')"
+    )
+    assert rilettura.tutti_gli_atti(conn, 10) == [2]
+
+
+def test_tutti_gli_atti_salta_le_pagine_senza_nessuno(conn):
+    """Una copertina o un indice senza persone non e' un atto da rileggere:
+    non c'e' niente da confrontare con un contesto genealogico."""
+    atto(conn, 1, anno=1810)
+    persona(conn, 1, 1)
+    atto(conn, 2, anno=1811)  # nessuna persona: copertina o pagina bianca
+    assert rilettura.tutti_gli_atti(conn, 10) == [1]
+
+
+def test_tutti_gli_atti_rispetta_da_anno(conn):
+    for numero, anno in ((1, 1810), (2, 1850), (3, 1890)):
+        atto(conn, numero, anno=anno)
+        persona(conn, numero, numero)
+    assert rilettura.tutti_gli_atti(conn, 10, da_anno=1850) == [2, 3]
+
+
 def test_i_dubbi_di_identita_non_mandano_nessuno_all_immagine(conn):
     """La pagina dice cosa c'e' scritto, non chi era.
 
@@ -163,6 +215,83 @@ def test_la_pagina_viene_prima_del_contesto(dato):
 def test_il_sistema_vieta_di_correggere_perche_torni(dato):
     assert "NON e' correggere la trascrizione perche' torni" in rilettura.SISTEMA
     assert "ha ragione l'immagine" in rilettura.SISTEMA
+
+
+def test_il_sistema_chiede_plausibilita_del_nome(dato):
+    """Il caso vero che l'ha resa necessaria: 'Teodoro', scritto due
+    volte nello stesso atto e attestato 31 volte, letto 'Cynodoro' (zero
+    attestazioni) a confidenza 0,95 — il contesto c'era, e non e'
+    bastato."""
+    assert "VOCABOLARIO DEL PAESE" in rilettura.SISTEMA
+    assert "genealogista che conosce il paese" in rilettura.SISTEMA
+
+
+def test_il_vocabolario_entra_nell_istruzione_solo_se_dato(dato):
+    testo_senza = rilettura.istruzione(dato)
+    assert "VOCABOLARIO DEL PAESE" not in testo_senza
+
+    testo_con = rilettura.istruzione(dato, {"nomi": ["Marzio"], "cognomi": ["Lella"]})
+    assert "VOCABOLARIO DEL PAESE" in testo_con
+    assert "Marzio" in testo_con
+
+
+def test_la_chiave_cambia_se_cambia_il_vocabolario(dato):
+    prima = rilettura.chiave(dato, "gemini-3.6-flash", {"nomi": ["Marzio"]})
+    dopo = rilettura.chiave(dato, "gemini-3.6-flash", {"nomi": ["Marzio", "Lella"]})
+    assert prima != dopo
+
+
+# --- il vocabolario del paese -----------------------------------------
+
+def _individuo(conn, id, nome, cognome):
+    conn.execute(
+        "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+        "VALUES (?,?,?,?,1)", (id, f"P{id}", nome, cognome),
+    )
+
+
+def _fatto(conn, individuo, tipo, valore, interpretato=None):
+    conn.execute(
+        "INSERT INTO fatti (individuo, tipo, grezzo, interpretato) "
+        "VALUES (?,?,?,?)", (individuo, tipo, valore, interpretato),
+    )
+
+
+def test_il_vocabolario_conta_le_persone_non_le_menzioni(conn):
+    """Il sindaco che firma mille atti non deve pesare come mille persone
+    di nome Egidio: la domanda e' quante persone diverse portano quel
+    nome, non quante volte compare la sua firma."""
+    for numero in range(5):
+        _individuo(conn, numero, "Marzio", "Lella")
+    _individuo(conn, 100, "Egidio", "Pelliccia")
+
+    v = rilettura.vocabolario_del_paese(conn)
+    assert v["nomi"][0] == "Marzio"
+
+
+def test_il_vocabolario_delle_contrade_e_dei_mestieri_usa_l_interpretato(conn):
+    """La grafia storpiata non deve far testo da sola: conta la forma che
+    il vocabolario del paese ha gia' ricondotto."""
+    for _ in range(5):
+        _fatto(conn, 1, "professione", "Agrimenfore", interpretato="Agrimensore")
+    _fatto(conn, 2, "professione", "Contadino")   # senza interpretato: resta il grezzo
+
+    v = rilettura.vocabolario_del_paese(conn)
+    assert "Agrimensore" in v["mestieri"]
+    assert "Agrimenfore" not in v["mestieri"]
+    assert "Contadino" in v["mestieri"]
+
+
+def test_il_vocabolario_rispetta_i_tetti(conn):
+    for numero in range(rilettura.VOCABOLARIO_TOP_NOMI + 10):
+        _individuo(conn, numero, f"Nome{numero}", "Cognome")
+    v = rilettura.vocabolario_del_paese(conn)
+    assert len(v["nomi"]) == rilettura.VOCABOLARIO_TOP_NOMI
+
+
+def test_il_vocabolario_su_un_database_vuoto_non_fallisce(conn):
+    v = rilettura.vocabolario_del_paese(conn)
+    assert v == {"nomi": [], "cognomi": [], "contrade": [], "mestieri": []}
 
 
 def test_non_decidere_e_una_risposta_prevista():
@@ -241,6 +370,87 @@ def test_una_lettura_incerta_non_corregge(conn, dato):
         "gemini-3.6-flash",
     )
     assert quante == 0
+
+
+def test_una_forma_mai_vista_non_scavalca_una_forma_nota(conn, dato):
+    """Il caso vero: 'Teodoro', attestato, letto 'Cynodoro', mai visto.
+
+    Scritto due volte identico nello stesso atto, attestato 31 volte
+    nell'archivio, e il modello ha detto 'Cynodoro' lo stesso — due
+    volte, anche dopo aver aggiunto la regola sulla plausibilita' al
+    prompt. Il testo non basta: serve un controllo che non dipenda
+    dalla buona volonta' del modello.
+
+    La fixture 'dato' legge 'Marzio' come nome della menzione 100 (e'
+    quella lettura che una correzione a 'Cynodoro' sostituirebbe): perche'
+    il caso sia lo stesso di quello vero, e' 'Marzio' — la forma
+    **vecchia** — che deve essere gia' ben attestata nel paese.
+    """
+    for numero in range(5):
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,?,?,1)", (900 + numero, f"P{900+numero}", "Marzio", "Vario"),
+        )
+    quante = rilettura._correggi(
+        conn, dato,
+        {"campi": [_campo(100, "nome", "Cynodoro", confidenza=0.95)]},
+        "gemini-3.6-flash",
+    )
+    assert quante == 0
+    assert conn.execute("SELECT COUNT(*) FROM decisioni").fetchone()[0] == 0
+
+
+def test_una_forma_mai_vista_passa_se_la_vecchia_non_e_attestata(conn, dato):
+    """Il veto non e' assoluto: se anche la vecchia lettura era rara,
+    non c'e' niente da difendere, e la nuova lettura passa come sempre."""
+    quante = rilettura._correggi(
+        conn, dato, {"campi": [_campo(100, "cognome", "Bellucci")]}, "gemini-3.6-flash"
+    )
+    assert quante == 1        # "d'Andria Motta" (fixture) non e' attestato altrove
+
+
+def test_una_forma_mai_vista_passa_se_anche_lei_e_attestata(conn, dato):
+    """Se la nuova lettura esiste gia' nel paese, non e' 'mai vista':
+    passa come qualunque altra correzione."""
+    conn.execute(
+        "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+        "VALUES (901, 'P901', 'Altro', 'Bellucci', 1)"
+    )
+    quante = rilettura._correggi(
+        conn, dato, {"campi": [_campo(100, "cognome", "Bellucci")]}, "gemini-3.6-flash"
+    )
+    assert quante == 1
+
+
+def test_il_veto_di_plausibilita_vale_solo_per_nome_cognome_professione(conn, dato):
+    """Una data o un'eta' non hanno un vocabolario da rispettare."""
+    for numero in range(5):
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,?,?,1)", (910 + numero, f"P{910+numero}", "Nome", "Attestato"),
+        )
+    quante = rilettura._correggi(
+        conn, dato, {"campi": [_campo(100, "eta", "quaranta")]}, "gemini-3.6-flash"
+    )
+    assert quante == 1
+
+
+def test_attestazioni_conta_le_persone_non_le_menzioni(conn):
+    for numero in range(3):
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,?,?,50)", (numero, f"P{numero}", "Marzio", "Lella"),
+        )
+    assert rilettura._attestazioni(conn, "cognome", "Lella") == 3
+
+
+def test_attestazioni_su_professione_guarda_i_fatti(conn):
+    conn.execute(
+        "INSERT INTO fatti (individuo, tipo, grezzo, interpretato) "
+        "VALUES (1, 'professione', 'Agrimenfore', 'Agrimensore')"
+    )
+    assert rilettura._attestazioni(conn, "professione", "Agrimensore") == 1
+    assert rilettura._attestazioni(conn, "professione", "Agrimenfore") == 0  # e' il grezzo, non l'interpretato
 
 
 def test_la_stessa_correzione_non_si_registra_due_volte(conn, dato):

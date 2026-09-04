@@ -60,7 +60,14 @@ from history_maker.ricostruzione import cache, contesto
 
 logger = logging.getLogger(__name__)
 
-VERSIONE_PROMPT = "1.0.0"
+# 1.1.0: aggiunto il vocabolario del paese e le regole 6-7 (plausibilita'
+# del nome/cognome/mestiere/contrada, ragionamento in contesto familiare
+# ottocentesco). Trovato dopo un caso vero — "Teodoro", scritto due volte
+# nello stesso atto e attestato 31 volte nell'archivio, letto come
+# "Cynodoro" (zero attestazioni) a confidenza 0,95. Il numero di versione
+# cambia perche' la stessa domanda, con lo stesso prompt vecchio, non
+# andrebbe mai rifatta: e' il modo in cui la cache lo sa.
+VERSIONE_PROMPT = "1.1.0"
 
 # Una difesa contro l'errore di battitura che manda in coda tremila
 # pagine. Non e' la quota — quella la tiene il backend — ed e' un tetto
@@ -139,7 +146,24 @@ Regole che non puoi violare:
 5. Le formule del formulario ingannano. "marito di Angela Rossi" dice il
    nome della MOGLIE, non il cognome del marito; "fu Giuseppe" dice che
    il padre e' morto, e non fa parte del cognome di nessuno. Se la
-   trascrizione ha inglobato una di queste, dillo."""
+   trascrizione ha inglobato una di queste, dillo.
+6. Un nome, un cognome, un mestiere o una contrada devono avere senso in
+   un paese abruzzese dell'Ottocento — non "sembrare plausibili" in
+   astratto, ma esistere davvero in quel luogo e in quel secolo. In fondo
+   a questo messaggio trovi il VOCABOLARIO DEL PAESE: le forme piu'
+   attestate in tutto l'archivio. Una lettura che non compare li', ne'
+   fra le grafie gia' viste altrove nel contesto, e' un campanello
+   d'allarme — non un divieto, ma un motivo per abbassare la confidenza
+   o per dire AMBIGUO invece di scegliere. Fra una lettura che nessuno in
+   92 anni ha mai portato e una gia' scritta chiaramente nello stesso
+   documento un momento prima, vince quasi sempre la seconda: una grafia
+   iniziale insolita non basta a scavalcare un nome che il documento
+   stesso, o il paese, gia' conoscono.
+7. Ragiona come un genealogista che conosce il paese ragionerebbe: chi
+   e' comparente in questo atto, di che famiglia e' probabilmente, che
+   eta' avrebbe senso per il suo ruolo. Un'identita' che non ha senso in
+   una famiglia dell'Ottocento — un testimone di otto anni, un padre piu'
+   giovane del figlio — e' un segnale, non un dettaglio da ignorare."""
 
 
 def _risposta_attesa() -> str:
@@ -164,12 +188,73 @@ def _risposta_attesa() -> str:
     )
 
 
-def istruzione(dato: dict) -> str:
+# Quante forme per categoria mette il vocabolario del paese. Non e' una
+# lista esaustiva — sarebbe l'intero glossario — e' il senso del luogo
+# che chi e' cresciuto li' avrebbe gia' in testa: i nomi, i cognomi, le
+# contrade e i mestieri che chiunque, in paese, riconoscerebbe a colpo
+# d'occhio. Cinquanta nomi e cinquanta cognomi coprono la stragrande
+# maggioranza delle persone reali; venti contrade e dieci mestieri sono
+# gia' oltre quanto un paese di poche migliaia di anime ne conosca.
+VOCABOLARIO_TOP_NOMI = 50
+VOCABOLARIO_TOP_COGNOMI = 50
+VOCABOLARIO_TOP_VIE = 20
+VOCABOLARIO_TOP_MESTIERI = 10
+
+
+def vocabolario_del_paese(conn: sqlite3.Connection) -> dict:
+    """Le forme piu' attestate del paese: nomi, cognomi, contrade, mestieri.
+
+    Non e' materiale per il calcolo — quello vive nei pesi misurati sul
+    corpus, altrove — e' il termine di paragone che manca a un modello
+    che legge una pagina alla volta: senza, "Cynodoro" e "Teodoro" sono
+    ugualmente plausibili in astratto, perche' nessuno dei due significa
+    niente per chi non sa che il primo non e' mai esistito in
+    novantadue anni di registri e il secondo compare trentuno volte.
+
+    Costruito sugli **individui** (le persone riconosciute), non sulle
+    menzioni grezze: contare le menzioni darebbe piu' peso a chi compare
+    piu' spesso — il sindaco, la levatrice — che a quante persone
+    *diverse* portano davvero quel nome, che e' la domanda giusta.
+    """
+    def top(query: str, quanti: int) -> list[str]:
+        return [
+            riga[0] for riga in conn.execute(query).fetchall()[:quanti]
+            if riga[0]
+        ]
+
+    return {
+        "nomi": top(
+            "SELECT nome, COUNT(*) c FROM individui WHERE nome IS NOT NULL "
+            "AND nome <> '' GROUP BY nome ORDER BY c DESC",
+            VOCABOLARIO_TOP_NOMI,
+        ),
+        "cognomi": top(
+            "SELECT cognome, COUNT(*) c FROM individui WHERE cognome IS NOT NULL "
+            "AND cognome <> '' GROUP BY cognome ORDER BY c DESC",
+            VOCABOLARIO_TOP_COGNOMI,
+        ),
+        "contrade": top(
+            "SELECT COALESCE(interpretato, grezzo), COUNT(*) c FROM fatti "
+            "WHERE tipo = 'contrada' AND COALESCE(interpretato, grezzo) IS NOT NULL "
+            "GROUP BY 1 ORDER BY c DESC",
+            VOCABOLARIO_TOP_VIE,
+        ),
+        "mestieri": top(
+            "SELECT COALESCE(interpretato, grezzo), COUNT(*) c FROM fatti "
+            "WHERE tipo = 'professione' AND COALESCE(interpretato, grezzo) IS NOT NULL "
+            "GROUP BY 1 ORDER BY c DESC",
+            VOCABOLARIO_TOP_MESTIERI,
+        ),
+    }
+
+
+def istruzione(dato: dict, vocabolario: dict | None = None) -> str:
     """Il testo che accompagna l'immagine.
 
-    L'ordine conta: prima cosa si vede, poi cosa era stato letto, e per
-    ultimo cosa ci si aspetta. Mettere il contesto per primo lo
-    trasformerebbe nella domanda invece che nel termine di paragone.
+    L'ordine conta: prima cosa si vede, poi cosa era stato letto, poi
+    cosa ci si aspetta, e per ultimo il vocabolario del paese — il
+    termine di paragone piu' ampio, che serve a giudicare tutto il
+    resto e per questo va letto per ultimo, non per primo.
     """
     atto = dato["atto"]
     pezzi = [
@@ -194,6 +279,12 @@ def istruzione(dato: dict) -> str:
     if dato["domande_aperte"]:
         pezzi += ["", "--- LE DOMANDE A CUI QUESTA PAGINA PUO' RISPONDERE ---"]
         pezzi += [f"  {n}. {d}" for n, d in enumerate(dato["domande_aperte"], 1)]
+    if vocabolario:
+        pezzi += [
+            "",
+            "--- IL VOCABOLARIO DEL PAESE (le forme piu' attestate; vedi regola 6) ---",
+            json.dumps(vocabolario, ensure_ascii=False, indent=1),
+        ]
     pezzi += [
         "",
         "Guarda l'immagine e rispondi con un solo oggetto JSON:",
@@ -202,17 +293,21 @@ def istruzione(dato: dict) -> str:
     return "\n".join(pezzi)
 
 
-def chiave(dato: dict, modello: str) -> str:
+def chiave(dato: dict, modello: str, vocabolario: dict | None = None) -> str:
     """L'impronta di tutto cio' che cambia la risposta.
 
     Compresa **l'immagine**, per contenuto e non per nome: le pagine si
     possono riscaricare a una risoluzione diversa, e una risposta data
     su trecento pixel non vale per quella stessa pagina a mille.
+
+    Compreso il **vocabolario**: cresce con l'archivio, e una risposta
+    data quando "Teodoro" era attestato dieci volte non e' la stessa
+    domanda di quando ne e' attestato cento.
     """
     return cache.impronta(
         dato["atto"]["id"], dato["atto"].get("impronta_immagine"),
         dato["trascrizione_precedente"], dato["contesto_genealogico"],
-        dato["possible_errors"], modello, VERSIONE_PROMPT,
+        dato["possible_errors"], vocabolario, modello, VERSIONE_PROMPT,
     )
 
 
@@ -266,16 +361,7 @@ def casi(conn: sqlite3.Connection, quanti: int) -> list[int]:
     """
     from collections import Counter
 
-    gia_risposte: set[int] = set()
-    try:
-        gia_risposte = {
-            riga["atto"] for riga in conn.execute(
-                "SELECT DISTINCT atto FROM riletture WHERE stato = 'risposta'"
-            )
-        }
-    except sqlite3.OperationalError:
-        pass        # la tabella non esiste ancora: nessuna pagina fatta
-
+    gia_risposte = _gia_risposte(conn)
     segnaposto = ",".join("?" * len(TIPI_LEGGIBILI))
     scelti: dict[int, float] = {}
     per_persona: Counter = Counter()
@@ -304,6 +390,70 @@ def casi(conn: sqlite3.Connection, quanti: int) -> list[int]:
         if len(scelti) >= quanti:
             break
     return [atto for atto, _ in sorted(scelti.items(), key=lambda v: -v[1])][:quanti]
+
+
+def _gia_risposte(conn: sqlite3.Connection) -> set[int]:
+    try:
+        return {
+            riga["atto"] for riga in conn.execute(
+                "SELECT DISTINCT atto FROM riletture WHERE stato = 'risposta'"
+            )
+        }
+    except sqlite3.OperationalError:
+        return set()        # la tabella non esiste ancora: nessuna pagina fatta
+
+
+def tutti_gli_atti(
+    conn: sqlite3.Connection, quanti: int, da_anno: int | None = None,
+) -> list[int]:
+    """Ogni atto non ancora riletto, in ordine cronologico.
+
+    E' l'altra strada rispetto a :func:`casi`. Quella guarda solo le
+    pagine su cui **un'anomalia ha gia' segnalato** un dubbio preciso — un
+    cognome che non torna col padre, un'eta' incoerente con un atto di
+    nascita — e per costruzione non vede niente sulle pagine che sono
+    internamente coerenti ma sbagliate lo stesso: il caso di Marzio
+    d'Andria Motta, o di Pietrangelo Morella (che quasi certamente e' un
+    Moretta, come tutta la sua famiglia, ma nessuna anomalia lo dice
+    perche' l'atto e il padre dichiarato concordano sulla stessa grafia).
+
+    Questa strada rilegge **ogni pagina**, non solo quelle segnalate, con
+    lo stesso contesto genealogico completo di :func:`casi`. Costa di
+    piu' — un secolo di registri sono settemila atti — ma e' l'unico modo
+    di scoprire un errore silenzioso invece di aspettare che diventi
+    un'anomalia rumorosa.
+
+    Perche' ha senso ora e non da subito: e' la parte lenta e a basso
+    ragionamento (confrontare una pagina con la sua ipotesi genealogica),
+    ed e' esattamente il mestiere di Gemini — veloce, quota ampia, nessun
+    limite a finestre. L'arbitrato fra identita' resta un mestiere per un
+    modello che ragiona, e quello si esaurisce presto: non ha senso
+    tenerlo fermo ad aspettare, quando la lettura pura puo' avanzare da
+    sola nel frattempo.
+
+    ``da_anno`` restringe a un secolo — o a un pezzo — per volta: utile
+    per lavorare l'archivio a tappe verificabili invece che come un'unica
+    massa indistinta.
+    """
+    gia_risposte = _gia_risposte(conn)
+    query = (
+        "SELECT DISTINCT a.id FROM atti a JOIN persone p ON p.atto = a.id "
+        "WHERE 1=1"
+    )
+    parametri: list = []
+    if da_anno is not None:
+        query += " AND a.anno >= ?"
+        parametri.append(da_anno)
+    query += " ORDER BY a.anno, a.id"
+
+    scelti = []
+    for riga in conn.execute(query, parametri):
+        if riga[0] in gia_risposte:
+            continue
+        scelti.append(riga[0])
+        if len(scelti) >= quanti:
+            break
+    return scelti
 
 
 def prepara(conn: sqlite3.Connection, atti: list[int], immagini: Path) -> list[dict]:
@@ -362,11 +512,15 @@ def esegui(
     motore.verifica()
     scelto = config.trascrizione.modello
     fatte = gia_fatte(conn)
+    # Una volta sola per l'intera esecuzione, non per pagina: e' lo stesso
+    # vocabolario per tutte, e ricalcolarlo a ogni atto sarebbe tempo speso
+    # a riscoprire ogni volta che 'Torzi' e' un cognome del paese.
+    vocabolario = vocabolario_del_paese(conn)
     esiti = {"riusate": 0, "fatte": 0, "fallite": 0, "correzioni": 0,
              "conflitti_col_contesto": 0, "quota_esaurita": False}
 
     for dato in dossier[:tetto]:
-        impronta = chiave(dato, scelto)
+        impronta = chiave(dato, scelto, vocabolario)
         precedente = fatte.get(impronta)
         if precedente is not None and precedente["stato"] == "risposta":
             esiti["riusate"] += 1
@@ -374,7 +528,7 @@ def esegui(
 
         richiesta = Richiesta(
             sistema=SISTEMA,
-            istruzione=istruzione(dato),
+            istruzione=istruzione(dato, vocabolario),
             immagini=[Path(dato["_percorso_immagine"])],
             modello=scelto,
             timeout_s=config.trascrizione.timeout_s,
@@ -452,6 +606,71 @@ def _salva(
     )
 
 
+# I campi su cui ha senso chiedere "questa forma esiste nel paese?". Non
+# tutti: una data o un'eta' non hanno un vocabolario da rispettare.
+CAMPI_CON_VOCABOLARIO = frozenset({"nome", "cognome", "professione"})
+
+# Sotto quante attestazioni una forma non fa testo abbastanza da bocciare
+# l'alternativa. Sopra questa soglia la forma vecchia e' evidentemente
+# reale, e una nuova lettura con zero attestazioni altrove ha l'onere
+# della prova — che una sola pagina, letta da un modello che sappiamo
+# poter scavalcare persino un ancoraggio messo davanti ai suoi occhi, non
+# basta a fornire.
+MINIMO_ATTESTAZIONI_PER_BOCCIARE = 3
+
+
+def _attestazioni(conn: sqlite3.Connection, campo: str, valore: str) -> int:
+    """Quante persone diverse portano gia' questa forma nell'archivio.
+
+    Sugli **individui** (persone riconosciute), non sulle menzioni
+    grezze: la domanda e' 'questo nome esiste nel paese', non 'quante
+    volte compare la firma di chi lo porta piu' spesso'.
+    """
+    if not valore:
+        return 0
+    colonna = {"nome": "nome", "cognome": "cognome"}.get(campo)
+    if colonna:
+        return conn.execute(
+            f"SELECT COUNT(*) FROM individui WHERE {colonna} = ? COLLATE NOCASE",
+            (valore,),
+        ).fetchone()[0]
+    # Il canonico se c'e', il grezzo solo quando non c'e' — la stessa
+    # regola di 'vocabolario_del_paese'. Contare il grezzo anche quando
+    # esiste gia' un interpretato conterebbe una grafia storpiata gia'
+    # ricondotta come se fosse una forma a se': 'Agrimenfore' non deve
+    # sembrare attestata quando e' solo la lettura di 'Agrimensore'.
+    return conn.execute(
+        "SELECT COUNT(*) FROM fatti WHERE tipo = ? "
+        "AND COALESCE(interpretato, grezzo) = ? COLLATE NOCASE",
+        (campo, valore),
+    ).fetchone()[0]
+
+
+def _plausibile(conn: sqlite3.Connection, campo: str, nuova: str, vecchia: str) -> bool:
+    """Se vale la pena fidarsi di una lettura mai vista, contro una gia'
+    nota al paese.
+
+    Il caso che l'ha resa necessaria: "Teodoro", scritto due volte
+    nello stesso atto e attestato 31 volte nell'archivio, letto
+    "Cynodoro" — zero attestazioni, in nessun documento, mai — a
+    confidenza 0,95 prima e 0,90 dopo aver aggiunto la regola sulla
+    plausibilita' al prompt. Il testo non e' bastato: la lettura
+    visiva del modello ha scavalcato un ancoraggio che aveva davanti
+    agli occhi. Questo controllo non chiede al modello di essere piu'
+    prudente: lo e' al posto suo, dopo che ha gia' risposto.
+
+    Non e' un veto assoluto — un nome nuovo puo' benissimo essere vero,
+    un forestiero, una grafia che nessuno aveva ancora letto — ma
+    quando la forma vecchia e' gia' ben attestata, l'onere della prova
+    sta sulla nuova, e una sola lettura non lo regge.
+    """
+    if campo not in CAMPI_CON_VOCABOLARIO:
+        return True
+    if _attestazioni(conn, campo, nuova) > 0:
+        return True
+    return _attestazioni(conn, campo, vecchia) < MINIMO_ATTESTAZIONI_PER_BOCCIARE
+
+
 def _correggi(conn: sqlite3.Connection, dato: dict, letto: dict, modello: str) -> int:
     """Trasforma le letture sicure e diverse in correzioni registrate.
 
@@ -459,11 +678,11 @@ def _correggi(conn: sqlite3.Connection, dato: dict, letto: dict, modello: str) -
     in una tabella e la ricostruzione successiva rifarebbe lo stesso
     errore.
 
-    Due condizioni, e la seconda e' la piu' importante. La lettura deve
-    essere **sicura**, e deve essere **diversa da quella trascritta**:
-    una conferma non e' una correzione, ed e' un risultato quanto una
-    correzione — significa che li' a non tornare e' l'identita', non la
-    lettura.
+    Tre condizioni, e la terza e' quella nuova. La lettura deve essere
+    **sicura**, deve essere **diversa da quella trascritta** — una
+    conferma non e' una correzione, ed e' un risultato quanto una
+    correzione, significa che li' a non tornare e' l'identita', non la
+    lettura — e deve essere **plausibile**: vedi :func:`_plausibile`.
     """
     from history_maker.ricostruzione import registro
 
@@ -491,6 +710,12 @@ def _correggi(conn: sqlite3.Connection, dato: dict, letto: dict, modello: str) -
         vecchia = (riga.get(quale) or "").strip()
         if paleografia.normalizza(nuova) == paleografia.normalizza(vecchia):
             continue        # conferma la lettura: non e' una correzione
+        if not _plausibile(conn, quale, nuova, vecchia):
+            logger.info(
+                "correzione scartata: %r -> %r su %s non ha nessuna "
+                "attestazione contro una forma gia' nota", vecchia, nuova, quale,
+            )
+            continue
         gia = conn.execute(
             "SELECT 1 FROM decisioni WHERE azione = 'correzione' AND entita = ? "
             "AND evidenze LIKE ?", (json.dumps([menzione]), f"{quale}=%")

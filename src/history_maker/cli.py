@@ -135,6 +135,16 @@ def _parser() -> argparse.ArgumentParser:
                    help="quante pagine rileggere al massimo")
     p.add_argument("--atto", type=int, default=None,
                    help="una pagina precisa, invece di quelle in coda")
+    p.add_argument("--tutte", action="store_true",
+                   help="rilegge ogni pagina non ancora fatta, in ordine "
+                        "cronologico, non solo quelle con un'anomalia "
+                        "gia' segnalata: l'unico modo di scoprire un "
+                        "errore silenzioso — un atto coerente con se "
+                        "stesso ma sbagliato lo stesso — invece di "
+                        "aspettare che diventi un'anomalia rumorosa")
+    p.add_argument("--da-anno", type=int, default=None,
+                   help="con --tutte, comincia da quest'anno invece che "
+                        "dal primo del registro")
     p.add_argument("--elenca", action="store_true",
                    help="mostra i contesti che manderebbe e si ferma "
                         "(non consuma quota)")
@@ -555,7 +565,12 @@ def main(argv: list[str] | None = None) -> int:
         # pagina sarebbero il motivo per cui la domanda non si fa.
         conn = sqlite3.connect(percorso)
         conn.row_factory = sqlite3.Row
-        atti = [args.atto] if args.atto else rilettura.casi(conn, args.quante)
+        if args.atto:
+            atti = [args.atto]
+        elif args.tutte:
+            atti = rilettura.tutti_gli_atti(conn, args.quante, da_anno=args.da_anno)
+        else:
+            atti = rilettura.casi(conn, args.quante)
         dossier = rilettura.prepara(conn, atti, config.immagini)
 
         if args.elenca or not dossier:
