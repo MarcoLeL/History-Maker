@@ -64,10 +64,15 @@ logger = logging.getLogger(__name__)
 # del nome/cognome/mestiere/contrada, ragionamento in contesto familiare
 # ottocentesco). Trovato dopo un caso vero — "Teodoro", scritto due volte
 # nello stesso atto e attestato 31 volte nell'archivio, letto come
-# "Cynodoro" (zero attestazioni) a confidenza 0,95. Il numero di versione
-# cambia perche' la stessa domanda, con lo stesso prompt vecchio, non
-# andrebbe mai rifatta: e' il modo in cui la cache lo sa.
-VERSIONE_PROMPT = "1.1.0"
+# "Cynodoro" (zero attestazioni) a confidenza 0,95.
+# 1.2.0: la regola 6 non chiede piu' di confrontare con la lista delle
+# forme locali, ma con la conoscenza generale dei nomi italiani — "questo
+# nome esiste in Italia?", non solo "esiste in questo archivio?". La
+# versione 1.1 non aveva bastato sullo stesso caso ("Cynodoro" di nuovo, a
+# confidenza 0,90); la formulazione assoluta provata a mano ("non puoi
+# MAI...") ha funzionato ma vietava anche un nome vero mai visto prima in
+# paese, che e' esattamente cio' che non deve succedere.
+VERSIONE_PROMPT = "1.2.0"
 
 # Una difesa contro l'errore di battitura che manda in coda tremila
 # pagine. Non e' la quota — quella la tiene il backend — ed e' un tetto
@@ -147,18 +152,19 @@ Regole che non puoi violare:
    nome della MOGLIE, non il cognome del marito; "fu Giuseppe" dice che
    il padre e' morto, e non fa parte del cognome di nessuno. Se la
    trascrizione ha inglobato una di queste, dillo.
-6. Un nome, un cognome, un mestiere o una contrada devono avere senso in
-   un paese abruzzese dell'Ottocento — non "sembrare plausibili" in
-   astratto, ma esistere davvero in quel luogo e in quel secolo. In fondo
-   a questo messaggio trovi il VOCABOLARIO DEL PAESE: le forme piu'
-   attestate in tutto l'archivio. Una lettura che non compare li', ne'
-   fra le grafie gia' viste altrove nel contesto, e' un campanello
-   d'allarme — non un divieto, ma un motivo per abbassare la confidenza
-   o per dire AMBIGUO invece di scegliere. Fra una lettura che nessuno in
-   92 anni ha mai portato e una gia' scritta chiaramente nello stesso
-   documento un momento prima, vince quasi sempre la seconda: una grafia
-   iniziale insolita non basta a scavalcare un nome che il documento
-   stesso, o il paese, gia' conoscono.
+6. Un nome o un cognome deve esistere davvero nella tradizione italiana
+   dell'Ottocento. Usa quello che sai sui nomi italiani, non solo quello
+   che vedi in questa pagina: "Cynodoro" non e' un nome italiano — nessun
+   calendario, nessuna tradizione regionale lo porta — mentre "Teodoro"
+   lo e'. Se la tua lettura non e' un nome o un cognome italiano
+   riconoscibile, e la trascrizione precedente riporta invece una forma
+   che lo e', il sospetto cade sulla lettura nuova, non su quella vecchia:
+   abbassa la confidenza o rispondi AMBIGUO, invece di scegliere una
+   parola che sembra plausibile ma non esiste. In fondo a questo
+   messaggio trovi anche il VOCABOLARIO DEL PAESE — le forme piu'
+   attestate in questo archivio — come ulteriore riscontro, non come
+   unico giudice: un nome puo' essere vero ed essere il primo della sua
+   famiglia a comparire qui.
 7. Ragiona come un genealogista che conosce il paese ragionerebbe: chi
    e' comparente in questo atto, di che famiglia e' probabilmente, che
    eta' avrebbe senso per il suo ruolo. Un'identita' che non ha senso in
