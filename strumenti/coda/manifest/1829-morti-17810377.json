@@ -1,0 +1,754 @@
+{
+  "@context": "http://iiif.io/api/presentation/2/context.json",
+  "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest",
+  "@type": "sc:Manifest",
+  "sequences": [
+    {
+      "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/sequence",
+      "@type": "sc:Sequence",
+      "label": "Struttura fisica",
+      "canvases": [
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/LpR9NeZ",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/LpR9NeZ",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/LpR9NeZ",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/LpR9NeZ/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/LpR9NeZ",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/L/Lp/LpR/LpR9NeZ/007924996_01174-thumbnail.jpg"
+          },
+          "label": "pag. 1"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/0AmWNbD",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/0AmWNbD",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/0AmWNbD",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/0AmWNbD/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/0AmWNbD",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/0/0A/0Am/0AmWNbD/007924996_01175-thumbnail.jpg"
+          },
+          "label": "pag. 2"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/w94NYZl",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/w94NYZl",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/w94NYZl",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/w94NYZl/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/w94NYZl",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/w/w9/w94/w94NYZl/007924996_01176-thumbnail.jpg"
+          },
+          "label": "pag. 3"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/wlOkJVm",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/wlOkJVm",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/wlOkJVm",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wlOkJVm/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wlOkJVm",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/w/wl/wlO/wlOkJVm/007924996_01177-thumbnail.jpg"
+          },
+          "label": "pag. 4"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/0nOpP6l",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/0nOpP6l",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/0nOpP6l",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/0nOpP6l/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/0nOpP6l",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/0/0n/0nO/0nOpP6l/007924996_01178-thumbnail.jpg"
+          },
+          "label": "pag. 5"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/Lo7AqNN",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/Lo7AqNN",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/Lo7AqNN",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/Lo7AqNN/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/Lo7AqNN",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/L/Lo/Lo7/Lo7AqNN/007924996_01179-thumbnail.jpg"
+          },
+          "label": "pag. 6"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/wEe4p3V",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/wEe4p3V",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/wEe4p3V",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wEe4p3V/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wEe4p3V",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/w/wE/wEe/wEe4p3V/007924996_01180-thumbnail.jpg"
+          },
+          "label": "pag. 7"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/La48XYy",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/La48XYy",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/La48XYy",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/La48XYy/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/La48XYy",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/L/La/La4/La48XYy/007924996_01181-thumbnail.jpg"
+          },
+          "label": "pag. 8"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/5Y9Jrpv",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/5Y9Jrpv",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/5Y9Jrpv",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/5Y9Jrpv/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/5Y9Jrpv",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/5/5Y/5Y9/5Y9Jrpv/007924996_01182-thumbnail.jpg"
+          },
+          "label": "pag. 9"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/588bWkd",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/588bWkd",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/588bWkd",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/588bWkd/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/588bWkd",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/5/58/588/588bWkd/007924996_01183-thumbnail.jpg"
+          },
+          "label": "pag. 10"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/04oNbVR",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/04oNbVR",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/04oNbVR",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/04oNbVR/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/04oNbVR",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/0/04/04o/04oNbVR/007924996_01184-thumbnail.jpg"
+          },
+          "label": "pag. 11"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/wXkNbyv",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/wXkNbyv",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/wXkNbyv",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wXkNbyv/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wXkNbyv",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/w/wX/wXk/wXkNbyv/007924996_01185-thumbnail.jpg"
+          },
+          "label": "pag. 12"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/02lmArd",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/02lmArd",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/02lmArd",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/02lmArd/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/02lmArd",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/0/02/02l/02lmArd/007924996_01186-thumbnail.jpg"
+          },
+          "label": "pag. 13"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/5xOanlW",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/5xOanlW",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/5xOanlW",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/5xOanlW/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/5xOanlW",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/5/5x/5xO/5xOanlW/007924996_01187-thumbnail.jpg"
+          },
+          "label": "pag. 14"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/5gPqQgz",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/5gPqQgz",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/5gPqQgz",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/5gPqQgz/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/5gPqQgz",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/5/5g/5gP/5gPqQgz/007924996_01188-thumbnail.jpg"
+          },
+          "label": "pag. 15"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/LqelkZR",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/LqelkZR",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/LqelkZR",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/LqelkZR/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/LqelkZR",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/L/Lq/Lqe/LqelkZR/007924996_01189-thumbnail.jpg"
+          },
+          "label": "pag. 16"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/LPe6y3j",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/LPe6y3j",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/LPe6y3j",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/LPe6y3j/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/LPe6y3j",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/L/LP/LPe/LPe6y3j/007924996_01190-thumbnail.jpg"
+          },
+          "label": "pag. 17"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/wrOn8jp",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/wrOn8jp",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/wrOn8jp",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wrOn8jp/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wrOn8jp",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/w/wr/wrO/wrOn8jp/007924996_01191-thumbnail.jpg"
+          },
+          "label": "pag. 18"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/w1974Po",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/w1974Po",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/w1974Po",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/w1974Po/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/w1974Po",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/w/w1/w19/w1974Po/007924996_01192-thumbnail.jpg"
+          },
+          "label": "pag. 19"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/5VyRGkz",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/5VyRGkz",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/5VyRGkz",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/5VyRGkz/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/5VyRGkz",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/5/5V/5Vy/5VyRGkz/007924996_01193-thumbnail.jpg"
+          },
+          "label": "pag. 20"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/wORaQ3z",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/wORaQ3z",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/wORaQ3z",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wORaQ3z/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/wORaQ3z",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/w/wO/wOR/wORaQ3z/007924996_01194-thumbnail.jpg"
+          },
+          "label": "pag. 21"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/w6aNbnb",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/w6aNbnb",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/w6aNbnb",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/w6aNbnb/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/w6aNbnb",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/w/w6/w6a/w6aNbnb/007924996_01195-thumbnail.jpg"
+          },
+          "label": "pag. 22"
+        },
+        {
+          "@id": "https://antenati.cultura.gov.it/ark:/12657/an_ua17810377/LNeWEyj",
+          "@type": "sc:Canvas",
+          "width": 1000,
+          "height": 1000,
+          "images": [
+            {
+              "@id": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/annotation/LNeWEyj",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://dam-antenati.cultura.gov.it/antenati/containers/LyO6onK/manifest/canvas/LNeWEyj",
+              "resource": {
+                "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/LNeWEyj/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 1000,
+                "height": 1000,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://iiif-antenati.cultura.gov.it/iiif/2/LNeWEyj",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              }
+            }
+          ],
+          "thumbnail": {
+            "@id": "https://iiif-antenati.cultura.gov.it/thumb/antenati/L/LN/LNe/LNeWEyj/007924996_01196-thumbnail.jpg"
+          },
+          "label": "pag. 23"
+        }
+      ]
+    }
+  ],
+  "metadata": [
+    {
+      "label": "Titolo",
+      "value": "1829"
+    },
+    {
+      "label": "Tipologia",
+      "value": "Morti"
+    },
+    {
+      "label": "Datazione",
+      "value": "1829/01/01 - 1829/12/31"
+    },
+    {
+      "label": "Contesto archivistico",
+      "value": "Archivio di Stato di Chieti > Stato civile della restaurazione > Torrebruna"
+    },
+    {
+      "label": "Conservato da",
+      "value": "Archivio di Stato di Chieti"
+    },
+    {
+      "label": "Licenza",
+      "value": "<a href=\"https://antenati.cultura.gov.it/licenze\">https://antenati.cultura.gov.it/licenze</a>"
+    },
+    {
+      "label": "Diritti",
+      "value": "<a href=\"https://antenati.cultura.gov.it/diritti\">https://antenati.cultura.gov.it/diritti</a>"
+    },
+    {
+      "label": "Vedi il registro",
+      "value": "<a href=\"https://antenati.cultura.gov.it/ark:/12657/an_ua17810377\">https://antenati.cultura.gov.it/ark:/12657/an_ua17810377</a>"
+    },
+    {
+      "label": "Lingua",
+      "value": "it"
+    }
+  ],
+  "label": "Archivio di Stato di Chieti > Stato civile della restaurazione > Torrebruna > 1829",
+  "description": [
+    "Archivio di Stato di Chieti > Stato civile della restaurazione > Torrebruna > 1829"
+  ],
+  "logo": {
+    "@id": "https://dam-antenati.cultura.gov.it/static/logo-antenati.svg",
+    "service": {
+      "@context": "http://iiif.io/api/image/2/context.json",
+      "@id": "https://dam-antenati.cultura.gov.it/static/logo-antenati.svg",
+      "profile": "http://iiif.io/api/image/2/level2.json"
+    }
+  }
+}

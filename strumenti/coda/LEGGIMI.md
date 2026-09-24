@@ -30,17 +30,26 @@ codice: la cache della ricostruzione comprende le correzioni ma non i moduli.
 | `reg.py` | scrive nel registro le righe `P` (pagina guardata), `C` (correzione), `U` (unione), `S` (separazione) |
 | `applica_casi.py` | porta il registro dentro il database, senza ripetere cio' che c'e' gia' |
 | `giro.sh` | ricostruzione + qualita' + i due controlli, col server su una copia per tutta la durata |
-| `ps.py`, `cerca.py`, `pagina.py` | guardare una scheda, cercare una persona, aprire l'immagine |
+| `ps.py`, `cerca.py`, `pagina.py` | guardare una scheda, cercare una persona, aprire l'immagine (intera o ritagliata) |
+| `scarica_pagina.py` | scarica dal portale la singola pagina che manca, seguendo il manifest IIIF del registro |
+| `manifest/` | i manifest IIIF dei 338 registri: dentro c'e' l'indirizzo di ogni pagina |
 | `analisi_coniugi_cognomi.py` | i coniugi multipli e i figli col cognome lontano da quello del padre |
 | `analisi_cognomi_atto.py` | i figli col cognome diverso dal padre **nello stesso atto**; vuole che il precedente sia stato lanciato prima (legge il suo json) |
 | `confronta_qualita.py` | mette due rapporti di qualita' uno accanto all'altro |
 
 ## Cosa serve che non e' nel repository
 
-`/data/` e' escluso da git e pesa gigabyte: **le immagini dei registri**
-(`data/immagini/`, quattro giga e mezzo) e il **database**
-(`data/dataset/torrebruna.sqlite`). Senza il database non si ricostruisce;
-senza le immagini non si rilegge, e rileggere sulla pagina e' il punto del
-lavoro. Le trascrizioni (`data/trascrizioni/`, quarantadue mega) bastano a
-rifare il database con la fase `dataset`; le immagini si riscaricano dal
-portale con `discover` e `download`, un registro alla volta, quando serve.
+`/data/` e' escluso da git. Mancano due cose, e si rimediano in modo diverso.
+
+**Le immagini** (`data/immagini/`, 6294 pagine per quasi cinque giga) non
+servono tutte: un giro di coda ne guarda otto o dieci. `scarica_pagina.py`
+prende dal manifest IIIF l'indirizzo della pagina che serve e se la porta
+giu' da solo — `pagina.py` e `rari_lotto.py` lo chiamano quando il file non
+c'e', quindi il giro funziona anche su un clone vuoto: la prima lettura di
+ogni pagina costa un secondo di rete, le altre niente. Le pagine scaricate
+restano in `data/immagini/`, fuori da git.
+
+**Il database** (`data/dataset/torrebruna.sqlite`, ottanta mega) invece
+serve intero, e senza non si ricostruisce niente. Si rifa' dalle
+trascrizioni (`data/trascrizioni/`, quarantadue mega) con la fase
+`dataset`, che rimette dentro anche il registro delle decisioni.

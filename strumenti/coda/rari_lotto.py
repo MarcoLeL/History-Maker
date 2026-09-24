@@ -10,6 +10,8 @@ import json, sqlite3, sys
 from pathlib import Path
 from PIL import Image
 
+import scarica_pagina
+
 S = Path(__file__).resolve().parent
 PRIORITA = ("nome uguale al cognome", "nome mai visto", "senza cognome", "senza nome", "cognome mai visto")
 
@@ -49,7 +51,8 @@ def main():
     (S / "lotto").mkdir(exist_ok=True)
     c = sqlite3.connect("file:data/dataset/torrebruna.sqlite?mode=ro", uri=True, timeout=60)
     for v in resto[:quante]:
-        im = Image.open(Path("data/immagini") / v["immagine"]).convert("L")
+        # In un clone senza data/immagini la pagina si scarica adesso.
+        im = Image.open(scarica_pagina.scarica(v["immagine"])).convert("L")
         w, h = im.size
         im.resize((1600, int(1600 * h / w))).save(S / "lotto" / f"{v['n']}.jpg")
         print(f"\n== pagina {v['n']}  {v['immagine']}")
