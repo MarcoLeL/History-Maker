@@ -1,0 +1,223 @@
+# Configurazione della raccolta per il comune di Torrebruna (CH).
+#
+# I filtri operano sui metadati del manifest IIIF, non sull'HTML del
+# portale: ogni manifest espone "Contesto archivistico" (che contiene il
+# comune), "Titolo" (l'anno) e "Tipologia" (Nati, Morti, Matrimoni, ...).
+# Filtrare qui è quindi affidabile anche se il portale cambia grafica.
+
+comune: Torrebruna
+
+# Termine digitato nel campo "Luogo" della ricerca sul portale.
+termine_ricerca: Torrebruna
+
+# Il contesto archivistico deve contenere una di queste stringhe
+# (confronto senza distinzione di maiuscole/accenti).
+includi_contesto:
+  - Torrebruna
+
+# ...e non deve contenere nessuna di queste. Guardiabruna e' oggi una
+# frazione di Torrebruna ma fino al 1928 era comune autonomo con registri
+# di stato civile propri: il portale la restituisce fra i risultati della
+# ricerca ed e' esattamente cio' che va escluso.
+escludi_contesto:
+  - Guardiabruna
+
+anno_min: 1809
+anno_max: 1900
+
+# Tipologie da scaricare. Lista vuota = tutte quelle disponibili.
+# Valori tipici sul portale: Nati, Morti, Matrimoni, Pubblicazioni,
+# Cittadinanze, Diversi, Allegati, Indici.
+tipologie: []
+
+# Tipologie da lasciare fuori anche quando 'tipologie' e' vuota. Il
+# confronto e' per sottostringa, senza distinzione di maiuscole e accenti.
+#
+# I processetti sono il fascicolo di documenti allegati a una richiesta di
+# matrimonio: fedi di battesimo, atti di morte dei genitori, dispense.
+# Sono la parte piu' voluminosa della serie — 69 pagine su 105 nel solo
+# 1809 — e la piu' faticosa da leggere, perche' mescolano formulari
+# diversi e ampi passaggi in latino.
+escludi_tipologie:
+  - processetti
+  # Le pubblicazioni sono la PROMESSA di matrimonio, affissa all'albo nelle
+  # settimane precedenti: nominano gli stessi sposi e gli stessi genitori
+  # dell'atto vero, che nello stesso anno c'e' gia'. Tenerle vorrebbe dire
+  # contare due volte le stesse persone e far comparire nell'albero
+  # matrimoni che poi non si sono celebrati. Nel 1810 sono 16 atti su 16
+  # in un registro che si chiama 'Matrimoni, pubblicazioni' ma di
+  # matrimoni celebrati non ne contiene nessuno.
+  - pubblicazioni
+  # Notificazioni e opposizioni: la fase che precede il matrimonio, con
+  # gli avvisi affissi e gli eventuali impedimenti sollevati. Stessa
+  # famiglia delle pubblicazioni — nomina gli stessi sposi dell'atto vero
+  # — e da sola vale 1.785 pagine su 7.544, un quarto della raccolta.
+  - memorandum
+  # Gli indici decennali non sono atti: sono elenchi di cognomi con il
+  # numero d'atto a cui rimandano. Verificato sul catalogo: tutti e otto
+  # coprono decenni di cui abbiamo gia' gli atti, quindi non portano un
+  # solo nome nuovo — danno una seconda lettura degli stessi, utile alla
+  # fase 5 ma non all'albero.
+  #
+  # Restano soggetti al recupero qui sotto: se un giorno un decennio
+  # perdesse i suoi registri, l'indice rientrerebbe da solo come ultima
+  # fonte di quei nomi.
+  - indici decennali
+
+# Directory di lavoro (relative alla radice del progetto).
+paths:
+  catalogo: data/catalogo.json
+  immagini: data/immagini            # originali a piena risoluzione
+  ridotte: data/immagini_ridotte     # copie che legge Claude Code
+  trascrizioni: data/trascrizioni
+  dataset: data/dataset_F
+
+# Comportamento di rete. Il portale sta dietro un WAF: tenere i valori
+# bassi e' una scelta di cortesia verso un servizio pubblico gratuito.
+rete:
+  download_paralleli: 3
+  pausa_tra_richieste_s: 0.4
+  timeout_s: 120
+  tentativi: 5
+
+# Fase di trascrizione.
+trascrizione:
+  # Chi legge le pagine.
+  #
+  #   gemini       API di Google AI Studio. Il piano gratuito basta per
+  #                tutto il secolo: nessuna chiave a pagamento, nessun
+  #                credito. Serve la variabile d'ambiente GEMINI_API_KEY,
+  #                che si prende su https://aistudio.google.com/apikey
+  #   claude-code  L'abbonamento Claude Pro. Nessuna chiave, ma la quota
+  #                si rinnova a finestre di ore e regge circa un anno di
+  #                atti per finestra: un secolo diventa mesi di attesa.
+  backend: gemini
+
+  # Il modello, che deve appartenere al backend scelto.
+  #
+  # I modelli vanno e vengono, e uno che ieri funzionava puo' smettere di
+  # essere servito alle chiavi nuove: 'gemini-2.5-flash' e' sparito
+  # esattamente cosi'. Per vedere cosa accetta la tua chiave, senza
+  # consumare quota di generazione:
+  #
+  #     python -m history_maker modelli
+  #
+  # I '-latest' seguono l'ultima versione da soli, al prezzo di poter
+  # cambiare lettura da un giorno all'altro: per una trascrizione che
+  # dura giorni e va poi confrontata, meglio una versione fissa.
+  modello: gemini-3.5-flash-lite
+
+  # --- come arrivano le immagini al modello --------------------------------
+  #
+  # E' qui che si decide l'accuratezza, piu' che nella scelta del modello.
+
+  # Toglie la cornice nera della scansione e i margini bianchi prima di
+  # ridurre. Si puo' spegnere per confrontare le due letture.
+  ritaglia: true
+
+  # Divide la doppia pagina nelle sue due facciate e le manda come due
+  # immagini. E' l'intervento che alza di piu' la qualita' della lettura:
+  # una scansione e' orizzontale (~3700x2300), quindi ridotta intera a
+  # 1568 px ogni facciata arriva al modello con 784 px di larghezza.
+  # Divisa, ogni meta' e' verticale e la larghezza utile sale a ~1150 px.
+  # Le due meta' si sovrappongono di un dito, cosi' una parola a cavallo
+  # della piega resta intera almeno da un lato, e al modello viene detto
+  # che sono una pagina sola: nessun atto va perso.
+  dividi_facciate: true
+
+  # Lato lungo delle copie che il modello legge. Oltre i ~1568 px non si
+  # guadagna dettaglio utile: Claude ridimensiona comunque a quella
+  # misura, e per Gemini ogni riquadro di 768 px in piu' costa token
+  # senza aggiungere nulla che serva a leggere una grafia.
+  lato_lungo_px: 1568
+
+  # Qualita' JPEG delle copie. Sotto 80 cominciano gli artefatti sui
+  # tratti sottili, che e' esattamente quello che il modello deve leggere;
+  # sopra 90 il file cresce senza aggiungere niente. Conta piu' di quanto
+  # sembri: le immagini viaggiano dentro la richiesta, in base64, e a sei
+  # pagine per chiamata sono ~10 MB su un tetto di 20.
+  qualita_jpeg: 85
+
+  # --- il ritmo ------------------------------------------------------------
+
+  # Pagine per chiamata. Sul piano gratuito la risorsa scarsa sono le
+  # RICHIESTE al giorno: alzare questo numero e' il modo di trascrivere
+  # piu' pagine al giorno. Il tetto pratico e' il limite di token al
+  # minuto — con le facciate divise sono due immagini da ~1.550 token per
+  # pagina — e sei pagine per chiamata ci stanno comode. A 250 richieste
+  # al giorno fanno 1.500 pagine al giorno.
+  #
+  # ATTENZIONE: il tetto vero non e' quello dei token, e' l'ATTENZIONE.
+  # A dodici pagine per chiamata il modello, su una facciata che porta
+  # quattro atti, ne legge due e li numera da se': misurato sul registro
+  # 1882-morti, dove la pagina 6 porta gli atti 13-16 e la trascrizione
+  # diceva «sette, otto». Non e' una troncatura — quella il codice la
+  # riconosce e ripiega — e' una perdita silenziosa, con un JSON ben
+  # formato e sbagliato. Su tutto il fondo faceva sparire ~400 atti
+  # (il 5% dell'archivio) in 24 registri.
+  #
+  # A TRE pagine per chiamata lo stesso registro rende 60 atti invece di
+  # 37, e i numeri combaciano con la carta. Costa quattro volte le
+  # chiamate: un archivio incompleto costa di piu'.
+  #
+  # E non e' una monotonia: c'e' un OPTIMUM, non "meno e' meglio". A UNA
+  # pagina per chiamata la resa crolla — misurato su nove registri, sette
+  # peggiorano e alcuni rovinosamente (33 atti -> 3; 18 -> 1). Due o tre
+  # e' la zona buona; sotto e sopra si perde.
+  pagine_per_chiamata: 3
+
+  # Quante chiamate tenere aperte insieme. E' la leva piu' grossa sul
+  # tempo, ed e' quella che nessuno dei limiti del piano proibisce: le
+  # richieste partono comunque una alla volta, distanziate dal ritmo. Cio'
+  # che il parallelismo riempie e' l'ATTESA — una chiamata da sei pagine
+  # impiega 88 secondi a generare, e per ottantasette il processo sta
+  # fermo. Con un lavoratore solo si usa 0,7 del ritmo consentito.
+  #
+  # Il tetto utile e' il limite di token al minuto diviso i token per
+  # chiamata: oltre, i lavoratori in piu' si mettono solo in coda.
+  chiamate_parallele: 8
+
+  # I limiti del piano gratuito per il modello scelto. Zero li disattiva
+  # (per un piano a pagamento). Il conteggio giornaliero sta in
+  # data/.quota-gemini.json e sopravvive al riavvio: rilanciare il comando
+  # non azzera la quota gia' consumata.
+  # I valori qui sotto sono quelli LETTI su aistudio.google.com/rate-limit
+  # per gemini-3.6-flash. Non fidarti di nessun'altra fonte: la
+  # documentazione di Google non li pubblica piu', le guide di terze parti
+  # danno numeri di modelli vecchi, e sbagliarli significa credere di
+  # avere una giornata di lavoro davanti quando ne resta un ventesimo.
+  #
+  # I Flash danno 20 richieste al giorno; i Flash LITE ne danno 500.
+  # E' la differenza fra un mese e due giorni per il secolo intero.
+  richieste_al_minuto: 15
+  richieste_al_giorno: 500
+
+  # Il terzo limite, quello che mette il tetto a pagine_per_chiamata.
+  # Misurato: con le facciate divise una pagina sono ~2.700 token in
+  # ingresso e ~2.150 in uscita. A sei pagine per chiamata siamo a
+  # ~162.000 token al minuto in ingresso; a dieci si sfora.
+  token_al_minuto: 250000
+
+  # ATTENZIONE: nessuno di questi tre e' il vincolo che senti davvero.
+  # Misurato su 15 chiamate: 88 secondi ciascuna, cioe' 0,7 chiamate al
+  # minuto contro le 10 consentite. Quello che decide il tempo e' quanto
+  # ci mette il modello a scrivere la risposta, non la quota. 'transcribe
+  # --stima' lo calcola e dice quale dei tre vincoli morde.
+
+  # Tetto ai token di una risposta. Comprende quelli di ragionamento,
+  # quindi tenerlo alto non e' spreco: un JSON troncato a meta' e' una
+  # chiamata buttata.
+  token_massimi: 65536
+  # Ragionamento: -1 lascia decidere al modello, 0 lo spegne, un numero
+  # positivo lo limita.
+  token_ragionamento: -1
+
+  # --- cosa chiedere -------------------------------------------------------
+
+  # La trascrizione diplomatica integrale dell'atto. Misurata sulle prime
+  # 86 pagine e' un terzo dei token prodotti. Serve alla ricerca storica,
+  # non alla ricostruzione delle parentele: se punti solo all'albero
+  # genealogico, spegnerla fa entrare piu' pagine in ogni chiamata.
+  testo_integrale: true
+
+  timeout_s: 900
