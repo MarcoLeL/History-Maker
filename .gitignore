@@ -1,6 +1,14 @@
-# I dati: immagini, trascrizioni, database, cache. Sono gigabyte e si
-# riproducono con la pipeline; il repository tiene il codice che li fa.
-/data/
+# I dati: immagini, database, cache. Sono gigabyte e si riproducono con la
+# pipeline; il repository tiene il codice che li fa.
+#
+# Le trascrizioni no: sono quarantadue mega di testo, e da sole rifanno il
+# database con la fase 'dataset'. Provato il 24 settembre 2026: ricostruito
+# da capo in una cartella a parte, tutte e 52047 le righe di 'persone'
+# tornano con lo STESSO id, e gli id delle righe sono cio' a cui puntano le
+# decisioni prese sull'immagine. Senza di loro un clone non puo' ricostruire
+# niente, e le decisioni non avrebbero dove attaccarsi.
+/data/*
+!/data/trascrizioni/
 
 # Python
 __pycache__/
