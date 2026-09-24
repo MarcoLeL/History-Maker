@@ -434,10 +434,15 @@ function disegna() {
   // scende dai genitori, una barra orizzontale, e da li' i figli. Tirare
   // una linea per ogni figlio darebbe un pettine illeggibile.
   const famiglie = new Map();
+  /* Chi sta nell'albero per deduzione e non per un atto. Il tratto che
+   * lo lega ai genitori si disegna tratteggiato: nessun atto dice che e'
+   * loro figlio, lo dice il nome che ha dato ai suoi. */
+  const dedotti = new Set();
   for (const arco of grafo.archi) {
     if (arco.tipo !== 'filiazione') continue;
     const genitore = posizioni.get(arco.da), figlio = posizioni.get(arco.a);
     if (!genitore || !figlio) continue;
+    if (arco.stato === 'dedotto') dedotti.add(arco.a);
     const chiave = genitore.unita.indice;
     if (!famiglie.has(chiave)) famiglie.set(chiave, { unita: genitore.unita, figli: new Set() });
     famiglie.get(chiave).figli.add(arco.a);
@@ -491,7 +496,10 @@ function disegna() {
     }
     for (const figlio of elenco) {
       const x = figlio.x + LARGHEZZA / 2;
-      archi.appendChild(percorso(`M${x},${barra} L${x},${figlio.y}`, 'filiazione'));
+      const classe = 'filiazione' + (dedotti.has(figlio.nodo.id) ? ' dedotto' : '');
+      const titolo = dedotti.has(figlio.nodo.id)
+        ? 'Legame dedotto: nessun atto lo dichiara' : undefined;
+      archi.appendChild(percorso(`M${x},${barra} L${x},${figlio.y}`, classe, titolo));
     }
   }
 

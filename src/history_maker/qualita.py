@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -71,6 +71,11 @@ SCARTO_ETA_MASSIMO = 10
 # Quanto due nomi devono somigliarsi perche' due schede portino lo stesso
 # nome scritto in due modi, invece che due nomi diversi.
 SOGLIA_STESSO_NOME = 0.80
+
+# Quante volte un casato deve essere scritto negli atti di un marito perche'
+# un cognome vicino, in un'altra coppia, non si possa piu' prendere per una
+# sua lettura sbagliata.
+LETTURE_PER_UN_CASATO = 3
 
 
 @dataclass(frozen=True)
@@ -148,12 +153,20 @@ def _parti(conn: sqlite3.Connection) -> dict[int, list[tuple[date | None, int, i
     prendere quella data come data di un parto sposterebbe tutto.
     """
     per_genitore: dict[int, list[tuple[date | None, int, int]]] = defaultdict(list)
+    # Solo il neonato. Un atto di nascita nomina anche i genitori degli
+    # altri — «Domenicangelo Franchella del fu Manasse», testimone — e
+    # quel legame e' vero, ma non e' un parto di quell'anno: contarlo
+    # faceva nascere nel 1867 un figlio a Manasse Franchella, morto nel 1865.
     for riga in conn.execute(
         """
         SELECT l.genitore, l.figlio, a.id AS atto, a.data_evento, a.data_atto, a.anno
           FROM legami l
           JOIN atti a ON a.id = l.atto
          WHERE a.tipo = 'nascita'
+           AND EXISTS (
+               SELECT 1 FROM menzioni m JOIN persone p ON p.id = m.persona
+                WHERE m.individuo = l.figlio AND p.atto = l.atto
+                  AND p.ruolo IN ('neonato', 'neonata'))
         """
     ):
         quando = _data(riga)
@@ -307,29 +320,38 @@ RUOLI_DA_VIVI = ("testimone", "dichiarante", "ufficiale", "sposo", "sposa", "lev
 
 
 def atti_dopo_la_propria_morte(conn: sqlite3.Connection) -> list[Caso]:
+    from history_maker.menzioni import RUOLI_CONIUGE, nominato_vedovo
+
     segnaposti = ",".join("?" * len(RUOLI_DA_VIVI))
-    return [
-        Caso(
+    casi = []
+    for riga in conn.execute(
+        f"""
+        SELECT m.individuo, a.anno, a.tipo, a.testo_integrale, p.ruolo, p.nome,
+               i.anno_morte
+          FROM menzioni m
+          JOIN persone p ON p.id = m.persona
+          JOIN atti a ON a.id = p.atto
+          JOIN individui i ON i.id = m.individuo
+         WHERE i.anno_morte IS NOT NULL
+           AND a.anno > i.anno_morte
+           AND p.ruolo IN ({segnaposti})
+           AND COALESCE(p.stato_vitale, '') NOT LIKE '%fu%'
+           AND COALESCE(p.stato_vitale, '') NOT LIKE '%defunt%'
+        """,
+        RUOLI_DA_VIVI,
+    ):
+        # Il coniuge morto nominato nella morte dell'altro — «vedovo di
+        # D'Ettore Angela» nel 1881, lei morta nel 1865 — non e' li': la
+        # riga nel database resta «vivente», ma il testo dice il contrario.
+        if (riga["tipo"] == "morte" and riga["ruolo"] in RUOLI_CONIUGE
+                and nominato_vedovo(riga["nome"], riga["testo_integrale"])):
+            continue
+        casi.append(Caso(
             (riga["individuo"],),
             f"{_nome(conn, riga['individuo'])} muore nel {riga['anno_morte']} ed e' "
             f"{riga['ruolo']} in un atto del {riga['anno']}",
-        )
-        for riga in conn.execute(
-            f"""
-            SELECT m.individuo, a.anno, p.ruolo, i.anno_morte
-              FROM menzioni m
-              JOIN persone p ON p.id = m.persona
-              JOIN atti a ON a.id = p.atto
-              JOIN individui i ON i.id = m.individuo
-             WHERE i.anno_morte IS NOT NULL
-               AND a.anno > i.anno_morte
-               AND p.ruolo IN ({segnaposti})
-               AND COALESCE(p.stato_vitale, '') NOT LIKE '%fu%'
-               AND COALESCE(p.stato_vitale, '') NOT LIKE '%defunt%'
-            """,
-            RUOLI_DA_VIVI,
-        )
-    ]
+        ))
+    return casi
 
 
 def _due_atti_dello_stesso_tipo(
@@ -534,7 +556,11 @@ def eta_incoerente(conn: sqlite3.Connection) -> list[Caso]:
         """
     ):
         analisi = nomi.analizza_eta(riga["eta"])
-        if analisi is None:
+        if analisi is None or analisi.minima:
+            # «maggiore di eta'» non e' un'eta': dice solo che ne aveva
+            # almeno ventuno. Contarla come se fosse ventuno faceva
+            # nascere nel 1842 una donna del 1815 e chiamava «sospetta»
+            # una riga che non dice niente di sospetto.
             continue
         atteso = riga["anno"] - analisi.anno_nascita
         scarto = abs(atteso - riga["anno_nascita"])
@@ -631,27 +657,55 @@ def unione_scritta_due_volte(conn: sqlite3.Connection) -> list[Caso]:
 # Le frammentazioni
 # ---------------------------------------------------------------------------
 
+def _vedovanza(morte: dict, quando: dict, uno: int, due: int) -> bool:
+    """Il primo coniuge e' morto prima che cominciasse il secondo matrimonio?"""
+    # Lo stesso anno basta. Degli atti si conosce l'anno, non il giorno, e
+    # un coniuge vivo non si risposa: se l'archivio ha la morte del primo
+    # nell'anno del secondo matrimonio, la morte viene prima. Agostino
+    # Pelliccia resta vedovo di Maria Marianacci il 5 maggio 1900 e sposa
+    # Maria Irene Dionisia Marianacci il 5 luglio.
+    for a, b in ((uno, due), (due, uno)):
+        sua_morte, suo_anno = morte.get(a), quando.get(b)
+        if sua_morte and suo_anno and suo_anno >= sua_morte:
+            return True
+    return False
+
+
 def coniugi_duplicati(conn: sqlite3.Connection) -> list[Caso]:
     """Due coniugi della stessa persona che portano lo stesso nome.
 
-    Le seconde nozze sono frequentissime — si restava vedovi presto — ma
-    non ci si risposava con un'omonima della prima moglie. Quando i due
-    nomi si somigliano e' una donna sola, letta due volte.
+    Le seconde nozze sono frequentissime — si restava vedovi presto — e
+    quando i due nomi si somigliano e' quasi sempre una donna sola, letta
+    due volte. Quasi: col nome ci si risposava eccome, se la prima moglie
+    era morta e la seconda era la cognata. Percio' dove l'archivio ha
+    l'atto di morte del primo coniuge, **prima** del matrimonio col
+    secondo, il caso non si conta: non sono due letture della stessa
+    persona - un veto non le lascerebbe mai unire - sono due matrimoni.
+    Nicola Chielli, vedovo di Maria Domenica Desiderio nel 1875, sposa
+    Maria Domenica Mastrovincenzo nel 1876.
     """
+    morte = {
+        r["id"]: r["anno_morte"]
+        for r in conn.execute("SELECT id, anno_morte FROM individui")
+    }
     casi = []
     for ruolo, altro in (("marito", "moglie"), ("moglie", "marito")):
-        per_persona: dict[int, list[int]] = defaultdict(list)
+        per_persona: dict[int, list[tuple[int, int | None]]] = defaultdict(list)
         for riga in conn.execute(
-            f"SELECT {ruolo} AS uno, {altro} AS altro FROM unioni "
+            f"SELECT {ruolo} AS uno, {altro} AS altro, anno FROM unioni "
             f"WHERE {ruolo} IS NOT NULL AND {altro} IS NOT NULL"
         ):
-            per_persona[riga["uno"]].append(riga["altro"])
-        for persona, altri in per_persona.items():
-            if len(altri) < 2:
+            per_persona[riga["uno"]].append((riga["altro"], riga["anno"]))
+        for persona, elenco in per_persona.items():
+            if len(elenco) < 2:
                 continue
+            altri = [a for a, _ in elenco]
+            quando = dict(elenco)
             testi = {a: _testo(conn, a) for a in altri}
             for indice, uno in enumerate(altri):
                 for due in altri[indice + 1:]:
+                    if _vedovanza(morte, quando, uno, due):
+                        continue
                     if nomi.somiglianza_nome(testi[uno], testi[due]) >= SOGLIA_STESSO_NOME:
                         casi.append(Caso(
                             (persona, uno, due),
@@ -662,12 +716,22 @@ def coniugi_duplicati(conn: sqlite3.Connection) -> list[Caso]:
 
 
 def omonimi_con_la_stessa_nascita(conn: sqlite3.Connection) -> list[Caso]:
-    """Stesso nome, stesso cognome, stesso anno di nascita **certo**.
+    """Stesso nome, stesso cognome, stesso anno di nascita **certo**, stessi genitori.
 
-    Due atti di nascita distinti nello stesso anno per lo stesso nome
-    sarebbero due bambini diversi, e capita. Ma qui l'anno viene dal
-    proprio atto di nascita in entrambi i casi: o e' lo stesso atto letto
-    due volte, o e' la stessa persona rimasta in due schede.
+    La premessa di prima era sbagliata. Diceva: se tutti e due gli anni
+    vengono dal proprio atto di nascita, «o e' lo stesso atto letto due
+    volte, o e' la stessa persona rimasta in due schede». Ma due atti di
+    nascita distinti sono due bambini, e in un paese dove il primo figlio
+    prende il nome del nonno paterno due cugini nati nello stesso anno si
+    chiamano allo stesso modo per regola.
+
+    Misurato quando il veto sulle nascite e' passato dagli anni agli atti:
+    ventinove gruppi, e in **tutti e ventinove** i due atti nominavano
+    genitori diversi — Nicola Maria Pelliccia del 1827, figlio di Samuele
+    in un atto e di Erminia nell'altro. Nessuno di loro era una scheda
+    spezzata. Ora il gruppo si conta solo quando due schede hanno i
+    genitori in comune, o quando a una delle due i genitori mancano e non
+    si puo' dire.
     """
     gruppi: dict[tuple, list[int]] = defaultdict(list)
     for riga in conn.execute(
@@ -676,11 +740,38 @@ def omonimi_con_la_stessa_nascita(conn: sqlite3.Connection) -> list[Caso]:
         "AND nome IS NOT NULL AND cognome IS NOT NULL"
     ):
         gruppi[(riga["nome"], riga["cognome"], riga["anno_nascita"])].append(riga["id"])
-    return [
-        Caso(tuple(elenco),
-             f"{len(elenco)} schede per {nome} {cognome}, tutte nate nel {anno}")
-        for (nome, cognome, anno), elenco in gruppi.items() if len(elenco) > 1
-    ]
+
+    # Il genitore si riconosce da nome **e** cognome. Col solo nome due
+    # madri diverse si toccavano: Clementina Petta del 1881 figlia di Luigi
+    # e di Stella Colella, e l'altra, dello stesso anno, figlia di Arcangelo
+    # e di Stella Pelliccia - due cugine, contate come una scheda spezzata.
+    genitori: dict[int, set[tuple[str, str]]] = defaultdict(set)
+    for riga in conn.execute(
+        "SELECT l.figlio, i.nome, i.cognome FROM legami l "
+        "JOIN individui i ON i.id = l.genitore WHERE i.nome IS NOT NULL"
+    ):
+        genitori[riga["figlio"]].add(
+            (riga["nome"].casefold(), (riga["cognome"] or "").casefold())
+        )
+
+    def stessa_coppia(uno: int, altro: int) -> bool:
+        miei, suoi = genitori.get(uno, set()), genitori.get(altro, set())
+        return not miei or not suoi or bool(miei & suoi)
+
+    casi = []
+    for (nome, cognome, anno), elenco in gruppi.items():
+        if len(elenco) < 2:
+            continue
+        if not any(
+            stessa_coppia(uno, altro)
+            for indice, uno in enumerate(elenco) for altro in elenco[indice + 1:]
+        ):
+            continue
+        casi.append(Caso(
+            tuple(elenco),
+            f"{len(elenco)} schede per {nome} {cognome}, tutte nate nel {anno}",
+        ))
+    return casi
 
 
 MASSIMO_CONIUGI = 2       # oltre, non e' vedovanza: e' una fusione sbagliata
@@ -724,6 +815,15 @@ def cognomi_inconciliabili(conn: sqlite3.Connection) -> list[Caso]:
     """
     from history_maker import paleografia
 
+    # Una donna col cognome letto in sei modi, ma con un marito solo in
+    # tutti gli atti, non ha inghiottito due famiglie: e' lei, e le letture
+    # sono sue (Domenica Cerulli, «Chielli» e «Cimini», sempre moglie di
+    # Pietro Ottaviano). Il sospetto resta per chi ha due coniugi, o nessuno.
+    coniugi: dict[int, set[int]] = defaultdict(set)
+    for marito, moglie in conn.execute("SELECT marito, moglie FROM unioni"):
+        coniugi[marito].add(moglie)
+        coniugi[moglie].add(marito)
+
     casi = []
     for riga in conn.execute(
         "SELECT m.individuo id, i.nome, i.cognome, "
@@ -745,7 +845,7 @@ def cognomi_inconciliabili(conn: sqlite3.Connection) -> list[Caso]:
                 for testa in gruppi
             ):
                 gruppi.append(forma)
-        if len(gruppi) > MASSIMO_COGNOMI:
+        if len(gruppi) > MASSIMO_COGNOMI and len(coniugi.get(riga["id"], ())) != 1:
             casi.append(Caso(
                 persone=(riga["id"],),
                 descrizione=(
@@ -768,6 +868,92 @@ def coppie_gemelle(conn: sqlite3.Connection) -> list[Caso]:
         persona: _testo(conn, persona)
         for coppia in coppie for persona in coppia
     }
+    nascite = {
+        r["id"]: r["anno_nascita"]
+        for r in conn.execute("SELECT id, anno_nascita FROM individui")
+    }
+    # Solo gli anni di nascita che vengono da un atto: sulle stime, che
+    # nascono dalle eta' dichiarate, un conto cosi' stretto direbbe
+    # sciocchezze.
+    nascite_certe = {
+        r["id"]: r["anno_nascita"] for r in conn.execute(
+            "SELECT id, anno_nascita FROM individui WHERE nascita_origine = 'certa'")
+    }
+
+    def anni_dei_figli(nucleo) -> list[int]:
+        return [nascite[figlio] for figlio in coppie[nucleo] if nascite.get(figlio)]
+
+    anagrafe = {
+        r["id"]: (r["anno_nascita"], r["nascita_origine"], r["anno_morte"])
+        for r in conn.execute(
+            "SELECT id, anno_nascita, nascita_origine, anno_morte FROM individui")
+    }
+
+    def possono_unirsi(uno: int, altro: int) -> bool:
+        """Le due schede potrebbero diventare una sola, o un veto lo esclude?
+
+        Due atti di morte distinti, o due atti di nascita distinti, sono
+        il veto piu' netto che ci sia: quelle due schede non si uniranno
+        mai, e contarle fra le famiglie spezzate vuol dire mettere in
+        coda un lavoro che non si puo' fare.
+        """
+        if uno == altro:
+            return True
+        (nascita_uno, origine_uno, morte_uno) = anagrafe.get(uno, (None, None, None))
+        (nascita_altro, origine_altro, morte_altro) = anagrafe.get(altro, (None, None, None))
+        if morte_uno and morte_altro and morte_uno != morte_altro:
+            return False
+        if (origine_uno == "certa" and origine_altro == "certa"
+                and nascita_uno != nascita_altro):
+            return False
+        return True
+
+    def _morte_prima_dei_figli(nucleo, anni_altrui: list[int]) -> bool:
+        """Un coniuge di questo nucleo e' morto prima dei figli dell'altro?"""
+        for persona in nucleo:
+            morte = anagrafe.get(persona, (None, None, None))[2]
+            if morte and anni_altrui and max(anni_altrui) > morte + 1:
+                return True
+        return False
+
+    def puo_averli(nucleo, anni: list[int]) -> bool:
+        """I due genitori del nucleo erano gia' nati (e grandi) per quei figli?"""
+        for genitore in nucleo:
+            sua = nascite_certe.get(genitore)
+            if sua is not None and anni and min(anni) < sua + ETA_MINIMA_GENITORE:
+                return False
+        return True
+
+    # Il casato di ciascun marito, come lo leggono i suoi atti. Due mariti
+    # con lo stesso nome e cognomi vicini - Ferdinando Lozzi, sarto, figlio
+    # di Giuseppe, e Ferdinando Torzi, contadino, del fu Crescenzo, sposati
+    # a due Maria Marianacci - si somigliano abbastanza da sembrare una
+    # coppia sola. Se ognuno dei due ha il suo casato scritto in almeno
+    # tre atti e mai quello dell'altro, sono due famiglie: una lettura
+    # sbagliata non si ripete identica tante volte.
+    letture_casato: dict[int, Counter] = defaultdict(Counter)
+    try:
+        righe_casato = conn.execute(
+            "SELECT individuo, COALESCE(interpretato, normalizzato) AS cognome "
+            "FROM fatti WHERE tipo = 'cognome'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Un archivio senza i fatti (quello del sistema vecchio): senza
+        # letture non si esclude niente.
+        righe_casato = []
+    for riga in righe_casato:
+        if riga["cognome"]:
+            letture_casato[riga["individuo"]][riga["cognome"].casefold()] += 1
+
+    def casati_distinti(uno: int, altro: int) -> bool:
+        suo, altrui = letture_casato.get(uno), letture_casato.get(altro)
+        if not suo or not altrui:
+            return False
+        primo, secondo = suo.most_common(1)[0][0], altrui.most_common(1)[0][0]
+        return (primo != secondo
+                and suo[primo] >= LETTURE_PER_UN_CASATO
+                and altrui[secondo] >= LETTURE_PER_UN_CASATO
+                and secondo not in suo and primo not in altrui)
 
     # Si confrontano solo le coppie che condividono l'inizio di tutti e
     # due i cognomi: senza questo il confronto sarebbe fra tutte le
@@ -791,6 +977,41 @@ def coppie_gemelle(conn: sqlite3.Connection) -> list[Caso]:
                     testi[una[1]], testi[altra[1]]
                 ) < SOGLIA_STESSO_NOME:
                     continue
+                # Due nuclei sono la stessa coppia solo se i loro figli
+                # stanno dentro gli anni fertili di **una** donna. Senza
+                # questo, il conto chiamava «famiglia spezzata» anche gli
+                # omonimi di due generazioni diverse — Francesco
+                # Iannicelli n.1845 con i figli dal 1871 accanto a un
+                # Francesco Iannicelli padre di un figlio del 1784 — che
+                # nessuna fusione potrebbe mai rimettere insieme, perche'
+                # il veto della fertilita' la rifiuta per primo. Sono
+                # casi veri dell'archivio, ma non sono frammentazione:
+                # contarli nascondeva le famiglie davvero spezzate.
+                anni = anni_dei_figli(una) + anni_dei_figli(altra)
+                if anni and max(anni) - min(anni) > ARCO_MASSIMO_DEI_PARTI:
+                    continue
+                # E nemmeno quando l'atto di nascita di un genitore dice
+                # che uno dei figli e' nato prima che lui potesse averlo:
+                # Giuseppe Di Nardo, nato nel 1855, non e' il padre del
+                # bambino del 1867, e nessuna fusione potra' mai dirlo -
+                # il veto lo impedisce. Sono omonimi di due generazioni,
+                # non una famiglia spezzata.
+                if not (puo_averli(una, anni) and puo_averli(altra, anni)):
+                    continue
+                if not (possono_unirsi(una[0], altra[0])
+                        and possono_unirsi(una[1], altra[1])):
+                    continue
+                if casati_distinti(una[0], altra[0]):
+                    continue
+                # Le seconde nozze non sono una famiglia spezzata: la
+                # prima moglie muore, il vedovo si risposa - spesso con
+                # una cognata, che porta lo stesso nome di battesimo - e
+                # i figli riprendono. Unire quelle due donne e' escluso
+                # dal veto «un figlio nasce dopo la morte». Il caso:
+                # Ferdinando Mosca, Anna Di Palma morta nel 1873 e i
+                # figli del 1875-86.
+                if _morte_prima_dei_figli(una, anni_dei_figli(altra)) or                         _morte_prima_dei_figli(altra, anni_dei_figli(una)):
+                    continue
                 casi.append(Caso(
                     (una[0], una[1], altra[0], altra[1]),
                     "due nuclei per la stessa coppia: "
@@ -803,12 +1024,19 @@ def coppie_gemelle(conn: sqlite3.Connection) -> list[Caso]:
 
 
 def figli_omonimi_vivi(conn: sqlite3.Connection) -> list[Caso]:
-    """Due figli della stessa coppia con lo stesso nome, e nessuno morto.
+    """Due figli della stessa coppia con lo stesso nome, tutti e due vivi.
 
     Rimettere a un neonato il nome di un fratello morto e' un uso
-    documentato e frequente, e non va segnalato. Ma se del primo non
-    risulta nessuna morte, o sono lo stesso bambino contato due volte,
-    o una delle due nascite e' finita nella famiglia sbagliata.
+    documentato e frequente, e non va segnalato. Ma se il primo e'
+    ancora vivo quando nasce il secondo, o sono lo stesso bambino contato
+    due volte, o una delle due nascite e' finita nella famiglia
+    sbagliata.
+
+    Che il primo sia vivo lo deve dire l'archivio: una menzione sua
+    **dopo** la nascita del secondo. Richiedere solo che manchi l'atto di
+    morte non basta, e costava caro: su quarantadue casi, ventitre erano
+    bambini morti piccoli il cui atto di morte non e' stato scritto -
+    nessun lavoro da fare, e in mezzo a loro sparivano i nove veri.
     """
     morte = {
         r["id"]: (r["anno_morte"], r["morta_entro"], r["nome"])
@@ -816,6 +1044,42 @@ def figli_omonimi_vivi(conn: sqlite3.Connection) -> list[Caso]:
             "SELECT id, nome, anno_morte, morta_entro FROM individui"
         )
     }
+    nascite = {
+        r["id"]: r["anno_nascita"]
+        for r in conn.execute("SELECT id, anno_nascita FROM individui")
+    }
+    ultimo_anno: dict[int, int] = {}
+    for riga in conn.execute(
+        """SELECT m.individuo, MAX(a.anno) AS ultimo FROM menzioni m
+             JOIN persone p ON p.id = m.persona JOIN atti a ON a.id = p.atto
+            GROUP BY m.individuo"""
+    ):
+        ultimo_anno[riga["individuo"]] = riga["ultimo"]
+
+    # Il nome dato al battesimo, com'e' scritto nell'atto di nascita. La
+    # scheda porta il nome piu' usato, e i due figli di Rosario Franchella
+    # erano tutti e due «Antonio»: all'atto sono Francesco Antonio (1845) e
+    # Domenico Antonio (1847), due nomi, due fratelli.
+    battesimo: dict[int, set[str]] = defaultdict(set)
+    for riga in conn.execute(
+        """SELECT m.individuo, p.nome FROM menzioni m
+             JOIN persone p ON p.id = m.persona JOIN atti a ON a.id = p.atto
+            WHERE a.tipo = 'nascita' AND p.ruolo IN ('neonato', 'neonata')
+              AND p.nome IS NOT NULL"""
+    ):
+        battesimo[riga["individuo"]].add(" ".join(riga["nome"].casefold().split()))
+
+    def nomi_diversi_al_battesimo(uno: int, altro: int) -> bool:
+        primi, secondi = battesimo.get(uno), battesimo.get(altro)
+        return bool(primi and secondi and not primi & secondi)
+
+    def vivo_quando_nasce(primo: int, secondo: int) -> bool:
+        """Del primo si sa qualcosa dopo la nascita del secondo?"""
+        nato = nascite.get(secondo)
+        if nato is None:
+            return True        # senza la data non si puo' escludere niente
+        return (ultimo_anno.get(primo) or 0) > nato
+
     casi = []
     for (padre, madre), figli in _coppie(conn).items():
         visti: dict[str, int] = {}
@@ -827,11 +1091,14 @@ def figli_omonimi_vivi(conn: sqlite3.Connection) -> list[Caso]:
             gemello = visti.get(chiave)
             if gemello is not None:
                 anno_morte, entro, _ = morte.get(gemello, (None, None, None))
-                if anno_morte is None and entro is None:
+                if (anno_morte is None and entro is None
+                        and vivo_quando_nasce(gemello, figlio)
+                        and not nomi_diversi_al_battesimo(gemello, figlio)):
                     casi.append(Caso(
                         (padre, madre, gemello, figlio),
                         f"{_nome(conn, padre)} x {_nome(conn, madre)} hanno due figli "
-                        f"di nome {nome_figlio} e del primo non risulta la morte: "
+                        f"di nome {nome_figlio} e il primo compare ancora dopo la "
+                        f"nascita del secondo: "
                         f"{_nome(conn, gemello)}, {_nome(conn, figlio)}",
                     ))
             visti[chiave] = figlio

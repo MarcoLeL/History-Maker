@@ -38,6 +38,9 @@ from history_maker.ricostruzione import modello
 # donna qualunque nome porti. Dal nome invece si deduce, e una deduzione
 # non puo' diventare un veto.
 RUOLI_CERTI = frozenset(nomi.RUOLI_MASCHILI | nomi.RUOLI_FEMMINILI)
+# Quello che 'Scheda.separati_a_mano' rende per il 99,9% delle schede: il
+# controllo gira un milione e mezzo di volte, e non deve costruire niente.
+_NESSUNA: frozenset = frozenset()
 
 
 @dataclass
@@ -79,6 +82,15 @@ class Scheda:
     # se ce n'e' piu' di uno, la scheda e' sbagliata e deve poterlo dire.
     nascite_certe: list = field(default_factory=list)
     morti: list = field(default_factory=list)
+    # Gli EVENTI, non gli anni: due atti di nascita distinti sono due
+    # persone anche quando cadono nello stesso anno, e a Torrebruna
+    # capita — la nascita n. 30 e la n. 34 del 1834 sono due bambini che
+    # si chiamano tutti e due Giuseppe. Il confronto sugli anni, con la
+    # sua tolleranza, non poteva vederlo. Il numero e' quello
+    # dell'evento (vedi 'menzioni.atti_gemelli'), cosi' lo stesso atto
+    # letto due volte resta uno.
+    atti_di_nascita: set = field(default_factory=set)
+    atti_di_morte: set = field(default_factory=set)
     nascite_stimate: list = field(default_factory=list)   # (anno, approssimata)
     # Gli stessi anni, tenuti in ordine mentre entrano. La mediana e il
     # controllo di concordia si chiedono a ogni confronto — un milione
@@ -114,6 +126,11 @@ class Scheda:
     ruolo_del_limite: tuple | None = None
     ruolo_del_limite_alto: tuple | None = None
     atti: set = field(default_factory=set)
+    # Gli **eventi**: gli atti, ma con i gemelli ricondotti a uno solo.
+    # Un matrimonio scritto su tre pagine e' un evento, non tre, e due
+    # affissioni della stessa promessa nemmeno. Vedi
+    # ``menzioni.atti_gemelli``.
+    eventi: set = field(default_factory=set)
     # Gli identificatori delle menzioni, per i confronti che devono
     # essere immediati.
     ids: set = field(default_factory=set)
@@ -122,6 +139,28 @@ class Scheda:
     # quasi sempre vuoto, e per questo il controllo costa niente:
     # 'if scheda.vietati' e' falso per il 99,9% delle schede.
     vietati: set = field(default_factory=set)
+    # Le separazioni decise guardando la pagina, non da una divisione del
+    # calcolo: il calcolo puo' tornare sui propri passi, una persona no.
+    # Vedi 'evidenza.veti'. Si tengono **riga per riga** — per ogni
+    # menzione della scheda, le menzioni con cui non puo' stare — perche'
+    # una decisione parla di righe, non di schede. Tenute per scheda, a
+    # ogni divisione i divieti passavano a righe che la decisione non
+    # nominava: il dichiarante del 1825 staccato da Lorenzo Marianacci si
+    # portava dietro il divieto contro Loreto, che era proprio lui.
+    # 'separati_a_mano' e' la loro somma sulla scheda.
+    divieti_a_mano: dict = field(default_factory=dict)
+    # I divieti che valgono per tutta la scheda, senza una riga: li mette
+    # chi assegna 'separati_a_mano' direttamente.
+    _separati_in_blocco: set = field(default_factory=set)
+    # I casati che il padre conferma nello stesso atto: vedi
+    # 'menzioni.casati_confermati' e 'evidenza._un_altro_casato'.
+    casati_certi: set = field(default_factory=set)
+    # Le **forme** del casato che un atto conferma, cioe' che il figlio e
+    # suo padre scrivono uguale nella stessa pagina. 'casati_certi' ne
+    # tiene le chiavi, per i veti; qui servono le parole come sono
+    # scritte, perche' sono quelle che la scheda mostra. Vedi
+    # 'cognome_migliore'.
+    cognomi_certi: Counter = field(default_factory=Counter)
 
     # --- i legami come nomi ricopiati -------------------------------------
     padri_nome: set = field(default_factory=set)
@@ -163,8 +202,46 @@ class Scheda:
         )
         scheda.incerte = set(una.incerte) | set(altra.incerte)
         scheda.prove = list(una.prove) + list(altra.prove)
+        # Le divisioni gia' decise sopravvivono alla fusione: unire A e B
+        # non autorizza nessuna delle due a riprendersi C.
+        scheda.vietati = (una.vietati | altra.vietati) - scheda.ids
+        for fonte in (una, altra):
+            for riga, vietate in fonte.divieti_a_mano.items():
+                scheda.vieta(riga, vietate)
+        scheda._separati_in_blocco = (
+            una._separati_in_blocco | altra._separati_in_blocco
+        ) - scheda.ids
         scheda.ricalcola(chiavi)
         return scheda
+
+    # --- le separazioni decise sulla pagina -----------------------------
+    @property
+    def separati_a_mano(self):
+        """Le menzioni con cui questa scheda non puo' stare, per decisione."""
+        if not self.divieti_a_mano and not self._separati_in_blocco:
+            return _NESSUNA
+        tutte = set(self._separati_in_blocco)
+        for vietate in self.divieti_a_mano.values():
+            tutte |= vietate
+        return tutte - self.ids
+
+    @separati_a_mano.setter
+    def separati_a_mano(self, valore) -> None:
+        self.divieti_a_mano = {}
+        self._separati_in_blocco = set(valore)
+
+    def vieta(self, riga: int, altre) -> None:
+        """La riga non puo' stare con nessuna delle altre."""
+        if altre:
+            self.divieti_a_mano.setdefault(riga, set()).update(altre)
+
+    def eredita_divieti(self, da: "Scheda") -> None:
+        """I divieti delle sole righe che questa scheda porta via da un'altra."""
+        self.divieti_a_mano = {
+            riga: set(vietate) for riga, vietate in da.divieti_a_mano.items()
+            if riga in self.ids
+        }
+        self._separati_in_blocco = set(da._separati_in_blocco)
 
     # -----------------------------------------------------------------
     def aggiungi(self, menzione, chiavi) -> None:
@@ -202,6 +279,8 @@ class Scheda:
         self.ruoli = Counter()
         self.nascite_certe = []
         self.morti = []
+        self.atti_di_nascita = set()
+        self.atti_di_morte = set()
         self.nascite_stimate = []
         self.anni_stimati = []
         self.parti = []
@@ -213,6 +292,7 @@ class Scheda:
         self.ruolo_del_limite = None
         self.ruolo_del_limite_alto = None
         self.atti = set()
+        self.eventi = set()
         self.ids = set()
         self.padri_nome = set()
         self.madri_nome = set()
@@ -222,6 +302,8 @@ class Scheda:
         self.coniugi_menzione = set()
         self.finestra = None
         self.morta_entro = None
+        self.casati_certi = set()
+        self.cognomi_certi = Counter()
         self.sesso = None
         self.sesso_certo = False
 
@@ -235,6 +317,9 @@ class Scheda:
             self.cognomi[menzione.cognome] += 1
             self.chiavi_cognome.add(menzione.chiave_cognome)
             self.conteggi_cognome[menzione.chiave_cognome] += 1
+            if getattr(menzione, "casato_confermato", False):
+                self.casati_certi.add(menzione.chiave_cognome)
+                self.cognomi_certi[menzione.cognome] += 1
         for forma in menzione.alternative_nome:
             self.alternative_nome.add(paleografia.forma_canonica(forma))
         for forma in menzione.alternative_cognome:
@@ -304,10 +389,12 @@ class Scheda:
                     self.nascita_al_piu_presto = limite
                     self.ruolo_del_limite_alto = (ruolo, menzione.anno)
         self.atti.add(menzione.atto)
+        self.eventi.add(menzione.evento or menzione.atto)
         self.ids.add(menzione.id)
 
         if menzione.nascita_certa is not None:
             self.nascite_certe.append(menzione.nascita_certa)
+            self.atti_di_nascita.add(menzione.evento or menzione.atto)
         stimata = menzione.anno_nascita
         if stimata is not None and menzione.eta is not None:
             self.nascite_stimate.append((stimata, menzione.eta.approssimata))
@@ -316,6 +403,7 @@ class Scheda:
             self.finestra = _interseca(self.finestra, menzione.finestra)
 
         if menzione.tipo_atto == "morte" and menzione.ruolo in ("defunto", "defunta"):
+            self.atti_di_morte.add(menzione.evento or menzione.atto)
             if menzione.anno:
                 self.morti.append(menzione.anno)
         elif (menzione.stato_vitale or "").startswith("defunt"):
@@ -332,6 +420,12 @@ class Scheda:
             self.parti.append(menzione.anno)
             if menzione.data:
                 self.parti_date.append((menzione.data, menzione.atto))
+        elif menzione.parto_implicito is not None:
+            # Il parto che l'atto documenta senza essere un atto di
+            # nascita: la madre di un defunto di cinquantotto anni ha
+            # partorito cinquantotto anni fa, e la sua scheda deve
+            # portarselo dietro come tutti gli altri.
+            self.parti.append(menzione.parto_implicito)
 
         if menzione.padre is not None:
             self.padri_menzione.add(menzione.padre)
@@ -352,6 +446,7 @@ class Scheda:
     @property
     def morte(self) -> int | None:
         return min(self.morti) if self.morti else None
+
 
     @property
     def anno_nascita(self) -> int | None:
@@ -419,6 +514,22 @@ class Scheda:
 
     def nome_migliore(self, attestazione: Counter | None = None) -> str | None:
         return _piu_attestata(self.nomi, attestazione)
+
+    # Provato e scartato: far scegliere alla scheda, fra le forme del suo
+    # casato, quella che un atto **conferma** — scritta uguale dal figlio
+    # e da suo padre nella stessa pagina — invece della piu' attestata.
+    # Nasceva da un caso vero, anzi da trentuno: padre e figlio con due
+    # casati diversi sulle schede pur scrivendolo uguale nell'atto che li
+    # lega (Monaco e Manes, Lorri e Lozzi, Leandro e Landea, Torzi e
+    # Corzi).
+    #
+    # Misurato: di quei trentuno non se n'e' chiuso **nessuno** — le
+    # classi sono rimaste 27, 14, 13, 4, 1 — e in cambio una
+    # frammentazione e un coniuge doppio in piu'. Il casato confermato e'
+    # frequente (dodicimilasettecento righe su cinquantaduemila), e quando
+    # una scheda ne ha piu' d'uno confermato la piu' attestata fra quelle
+    # resta la stessa di prima. Il nodo non e' quale forma la scheda
+    # mostri: e' che padre e figlio scelgono ognuno per conto suo.
 
     def cognome_migliore(self, attestazione: Counter | None = None) -> str | None:
         return _piu_attestata(self.cognomi, attestazione)

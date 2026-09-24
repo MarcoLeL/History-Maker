@@ -427,7 +427,8 @@ class Decisione:
     evidenze: tuple[str, ...] = ()
     contraddizioni: tuple[str, ...] = ()
     atti: tuple[int, ...] = ()
-    decisore: str = "algoritmo"     # algoritmo | claude | gemini | persona
+    # algoritmo | claude | claude-immagine | gemini | persona
+    decisore: str = "algoritmo"
     modello: str = ""
     versione_prompt: str = ""
     versione_algoritmo: str = ""
@@ -657,6 +658,10 @@ CREATE INDEX IF NOT EXISTS idx_decisioni_azione ON decisioni(azione);
 -- scarta 131.645 righe su 134.100 nell'archivio vero: senza un indice
 -- ogni chiamata scansiona la tabella intera per trovarne 116.
 CREATE INDEX IF NOT EXISTS idx_decisioni_decisore ON decisioni(decisore);
+-- Serve a 'registro.salva' per non riscrivere una decisione dell'algoritmo
+-- che il registro ha gia'. Senza, ogni giro rifarebbe la stessa ricerca su
+-- tutta la tabella, riga per riga.
+CREATE INDEX IF NOT EXISTS idx_decisioni_uguali ON decisioni(decisore, azione, entita);
 CREATE INDEX IF NOT EXISTS idx_verifiche_stato ON verifiche(stato, priorita DESC);
 
 CREATE VIRTUAL TABLE individui_fts USING fts5(

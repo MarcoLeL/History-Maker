@@ -379,12 +379,82 @@ def _unifica_varianti(conn: sqlite3.Connection) -> list[normalizza.Proposta]:
     return proposte
 
 
+# «di mesi otto», «di giorni tre»: l'unita' che distingue un lattante da
+# un ragazzo. Il modulo a stampa lo dice in calce — «Si scrivera' anni,
+# mesi, giorni o ore a seconda della eta' del defunto» — ma nel campo
+# arriva spesso il solo numero, e allora un bambino morto a otto mesi
+# entra nell'albero come un ragazzo di otto anni, con la nascita
+# spostata di sette. Su Torrebruna sono settantaquattro defunti.
+_ETA_CON_UNITA = re.compile(
+    r"\bdi\s+(mesi|mese|giorni|giorno|ore|ora)\s+([a-zA-Zà-ùÀ-Ù]+)", re.I
+)
+_UNITA_NELL_ETA = re.compile(r"\b(mesi|mese|giorni|giorno|ore|ora)\b", re.I)
+
+
+def _eta_con_unita(testo: str | None, eta: str | None) -> str | None:
+    """Rimette l'unita' a un'eta' che l'ha persa per strada.
+
+    Solo se il numero coincide: l'unita' non si attacca a indovinare. Se
+    il campo dice 'otto' e l'atto dice «di mesi otto», allora sono la
+    stessa cosa e l'unita' torna al suo posto; se dicono numeri diversi,
+    non e' la stessa eta' e non si tocca niente.
+
+    La formula della sepoltura — «dargli sepoltura dopo lo spazio di ore
+    ventiquattro» — e' in ogni atto di morte e non e' l'eta' di nessuno:
+    la si riconosce dalla parola 'spazio' che la precede.
+    """
+    ripulita = (eta or "").strip()
+    if not ripulita or not testo or _UNITA_NELL_ETA.search(ripulita):
+        return eta
+    for trovato in _ETA_CON_UNITA.finditer(testo):
+        if "spazio" in testo[max(0, trovato.start() - 40):trovato.start()].lower():
+            continue
+        unita, numero = trovato.group(1).lower(), trovato.group(2)
+        if numero.casefold() == ripulita.casefold():
+            return f"{unita} {numero}"
+    return eta
+
+
+# La tavola alfabetica non e' una pagina di atti: e' l'elenco che il
+# comune compilava a fine anno, una riga per matrimonio, con il numero
+# d'ordine e i nomi degli sposi. Ha la forma di un atto abbastanza da
+# ingannare — c'e' un "Num. d'ordine", ci sono due nomi — e lo schema
+# prevede apposta "tipo_pagina": "indice" e "voci_indice", ma il modello
+# la classifica lo stesso fra gli atti. Undici pagine cosi' avevano
+# generato diciassette atti e sessantotto persone che non esistono, e
+# ognuna di quelle persone entra nell'albero come un parente in piu'.
+_UNA_TAVOLA = re.compile(
+    r"tavola\s+(?:annuale\s+)?alfabetica|indice\s+annuale|"
+    r"tavola\s+de'?\s*(?:matrimoni|nati|morti|atti)",
+    re.I,
+)
+
+
+def _e_una_tavola(atto: dict) -> bool:
+    """L'«atto» e' in realta' una riga dell'indice di fine anno."""
+    return bool(_UNA_TAVOLA.search(atto.get("testo_integrale") or ""))
+
+
 def costruisci(config: Config) -> Path:
     """Costruisce il database SQLite e i CSV; restituisce il percorso del database."""
     config.dataset.mkdir(parents=True, exist_ok=True)
     percorso_db = config.dataset / "torrebruna.sqlite"
+    # Le tabelle che discendono dai JSON si rifanno; quelle che NON ci
+    # discendono — il registro delle decisioni e le riletture pagate con
+    # la quota — si mettono da parte prima e si rimettono dopo, con le
+    # menzioni ritrovate per chiave stabile invece che per rowid.
+    conservato = conserva(percorso_db)
+    # Si sposta, non si cancella. Fra il 'conserva' e il 'ripristina' c'e'
+    # una ricostruzione intera, e per tutta la sua durata il registro —
+    # trentasettemila decisioni, le riletture pagate a quota, i giudizi
+    # dati a mano — esisterebbe solo nella memoria di questo processo.
+    # Un Ctrl+C, un disco pieno, o il file tenuto aperto dal server
+    # dell'albero, e sarebbe perduto per sempre: e' l'unica cosa del
+    # progetto che non si puo' rifare partendo dai JSON.
+    precedente = percorso_db.with_suffix(".sqlite.precedente")
     if percorso_db.exists():
-        percorso_db.unlink()  # ricostruzione integrale: la fonte sono i JSON
+        precedente.unlink(missing_ok=True)
+        percorso_db.rename(precedente)
 
     conn = sqlite3.connect(percorso_db)
     conn.executescript(SCHEMA_SQL)
@@ -406,7 +476,7 @@ def costruisci(config: Config) -> Path:
             corrette[f"{c.letto} -> {c.corretto}"] += 1
         return corretto, incerto
 
-    n_atti = n_persone = n_pagine = n_voci = 0
+    n_atti = n_persone = n_pagine = n_voci = n_tavole = 0
     # Quante pagine ci sono in tutto: serve a dare una percentuale invece
     # di un silenzio. Contarle costa un attraversamento di directory, e
     # vale ogni millisecondo — tre volte oggi una fase muta e' sembrata
@@ -460,6 +530,9 @@ def costruisci(config: Config) -> Path:
             n_voci += 1
 
         for atto in pagina.get("atti") or []:
+            if _e_una_tavola(atto):
+                n_tavole += 1
+                continue
             luogo_corretto, luogo_incerto = _con_glossario_e_dubbio(atto.get("luogo"), "luogo")
             cursore = conn.execute(
                 """INSERT INTO atti (registro, immagine, numero_atto, tipo, anno,
@@ -514,7 +587,12 @@ def costruisci(config: Config) -> Path:
                         "cognome_letto": persona.get("cognome"),
                         "cognome_origine": "atto" if cognome else None,
                         "incerto": int(nome_incerto or cognome_incerto),
-                        "eta": persona.get("eta"),
+                        "eta": (
+                            _eta_con_unita(atto.get("testo_integrale"),
+                                           persona.get("eta"))
+                            if persona.get("ruolo") == "defunto"
+                            else persona.get("eta")
+                        ),
                         "professione": persona.get("professione"),
                         "residenza": residenza,
                         "residenza_letta": persona.get("residenza"),
@@ -555,6 +633,11 @@ def costruisci(config: Config) -> Path:
             "(%d frammenti riassorbiti)", cuciti, tolti,
         )
         n_atti -= tolti
+    if n_tavole:
+        logger.info(
+            "%d righe di tavola alfabetica scartate: sono indici, non atti",
+            n_tavole,
+        )
 
     logger.info("Fase 2/5: applico le alternative lette nelle note")
     _applica_alternative(conn)
@@ -597,6 +680,18 @@ def costruisci(config: Config) -> Path:
     (config.dataset / "sintesi.md").write_text(sintesi(conn, config), encoding="utf-8")
     _scrivi_proposte(config, proposte, toponimi)
     conn.close()
+
+    if conservato:
+        conti = ripristina(percorso_db, conservato)
+        logger.info(
+            "Registro rimesso: %d decisioni, %d riletture%s%s",
+            conti["decisioni"], conti["riletture"],
+            f", {conti['riprese']} orfane tornate a casa" if conti["riprese"] else "",
+            f", {conti['orfane']} messe da parte in decisioni_orfane"
+            if conti["orfane"] else "",
+        )
+    # Solo adesso il database di prima e' davvero di troppo.
+    precedente.unlink(missing_ok=True)
     return percorso_db
 
 
@@ -851,3 +946,241 @@ def _compatta_intervalli(anni: list[int]) -> str:
         inizio = precedente = anno
     gruppi.append(str(inizio) if inizio == precedente else f"{inizio}-{precedente}")
     return ", ".join(gruppi)
+
+
+# ---------------------------------------------------------------------------
+# Ricostruire senza perdere le prove
+# ---------------------------------------------------------------------------
+#
+# 'costruisci' cancella il file e lo rifa' dai JSON. E' giusto per le
+# tabelle che dai JSON discendono — atti, persone, pagine, voci — ed e'
+# rovinoso per le due che non ci discendono:
+#
+#   decisioni   il registro di cio' che e' stato deciso e perche', comprese
+#               le decisioni prese da una PERSONA. Il suo modulo dice che
+#               "non si azzera"; questo file la azzerava.
+#   riletture   le risposte gia' pagate con la quota giornaliera.
+#
+# C'e' un secondo strato, meno visibile e piu' pericoloso. Le decisioni
+# nominano le menzioni per 'persone.id', che e' un rowid assegnato
+# nell'ordine di inserimento: bastano duecento atti recuperati in mezzo
+# all'archivio perche' ogni id successivo scorra, e ogni correzione
+# finisca addosso a un'altra persona. Peggio: l'identita' di una SCHEDA
+# e' "P<prima menzione>", quindi scorrerebbe anche l'albero.
+#
+# La cura e' non fidarsi del rowid ma di una chiave che dipende dal
+# contenuto: quale registro, quale numero d'atto, che ruolo, come si
+# chiamava. Prima di cancellare si prende quella; dopo si ritrova l'id
+# nuovo. Cio' che non si ritrova non si indovina: resta da parte, in
+# 'decisioni_orfane', dove si puo' leggere e riconciliare a mano.
+
+# 'id_originale' e 'chiavi' non sono contabilita': sono cio' che rende
+# l'orfanezza reversibile. Con la chiave stabile al posto dell'id — che
+# dopo una ricostruzione non vuol dire piu' niente — la decisione si puo'
+# ritentare al giro dopo, e una menzione ricomparsa (una trascrizione
+# aggiunta, un cognome che il glossario ha smesso di travisare) se la
+# riprende. Senza, ogni ricostruzione cancellava la tabella che esiste
+# apposta per non perdere niente.
+SCHEMA_ORFANE = """
+CREATE TABLE IF NOT EXISTS decisioni_orfane (
+    quando TEXT, azione TEXT, entita TEXT, motivo TEXT, confidenza REAL,
+    evidenze TEXT, contraddizioni TEXT, atti TEXT, decisore TEXT,
+    modello TEXT, versione_prompt TEXT, versione_algoritmo TEXT, disfa INTEGER,
+    perche TEXT, id_originale INTEGER, chiavi TEXT
+);
+"""
+
+
+def _chiavi_delle_menzioni(conn: sqlite3.Connection) -> dict:
+    """Le menzioni per chiave stabile, e la mappa al contrario.
+
+    La chiave e' quel che identifica una menzione **senza** dipendere
+    dall'ordine di inserimento: l'atto (registro e numero, non
+    l'immagine, che puo' cambiare), il ruolo, e le due letture grezze.
+    L'ordinale scioglie i pochi casi in cui due menzioni dello stesso
+    atto sono identiche in tutto — due testimoni omonimi.
+    """
+    from collections import Counter
+
+    visti: Counter = Counter()
+    avanti, indietro = {}, {}
+    for riga in conn.execute(
+        "SELECT p.id, a.registro, a.numero_atto, a.tipo, p.ruolo, "
+        "p.nome_letto, p.cognome_letto FROM persone p "
+        "JOIN atti a ON a.id = p.atto ORDER BY p.id"
+    ):
+        base = tuple("" if x is None else str(x) for x in tuple(riga)[1:])
+        visti[base] += 1
+        chiave = base + (visti[base],)
+        avanti[riga[0]] = chiave
+        indietro[chiave] = riga[0]
+    return {"per_id": avanti, "per_chiave": indietro}
+
+
+def _chiavi_degli_atti(conn: sqlite3.Connection) -> dict:
+    avanti, indietro = {}, {}
+    for riga in conn.execute("SELECT id, registro, numero_atto, tipo FROM atti"):
+        chiave = tuple("" if x is None else str(x) for x in tuple(riga)[1:])
+        avanti[riga[0]] = chiave
+        indietro[chiave] = riga[0]
+    return {"per_id": avanti, "per_chiave": indietro}
+
+
+def conserva(percorso: Path) -> dict:
+    """Prende dal database cio' che i JSON non sanno rifare.
+
+    Rende una struttura che :func:`ripristina` sa rimettere dentro, con
+    le menzioni gia' tradotte in chiavi stabili.
+    """
+    if not percorso.exists():
+        return {}
+    conn = sqlite3.connect(percorso)
+    conn.row_factory = sqlite3.Row
+    try:
+        menzioni = _chiavi_delle_menzioni(conn)["per_id"]
+        atti = _chiavi_degli_atti(conn)["per_id"]
+        fuori: dict = {"decisioni": [], "riletture": [], "orfane": []}
+        try:
+            for riga in conn.execute("SELECT * FROM decisioni ORDER BY id"):
+                d = dict(riga)
+                try:
+                    entita = json.loads(d["entita"] or "[]")
+                except (TypeError, ValueError):
+                    entita = []
+                # Le decisioni sull'identita' nominano schede, non menzioni;
+                # ma una scheda e' "P<prima menzione>", quindi la chiave e'
+                # quella della menzione anche li'.
+                d["_entita_chiavi"] = [menzioni.get(x) for x in entita]
+                fuori["decisioni"].append(d)
+        except sqlite3.OperationalError:
+            pass
+        try:
+            for riga in conn.execute("SELECT * FROM decisioni_orfane"):
+                d = dict(riga)
+                try:
+                    chiavi = json.loads(d.get("chiavi") or "[]")
+                except (TypeError, ValueError):
+                    chiavi = []
+                d["id"] = d.get("id_originale")
+                # Le chiavi tornano dal JSON come liste: il confronto le
+                # vuole tuple, o nessuna corrispondenza andrebbe a segno.
+                d["_entita_chiavi"] = [tuple(k) if k else None for k in chiavi]
+                if not chiavi:
+                    # Un'orfana senza chiave non si ritenta MAI. Le orfane
+                    # scritte prima che questa colonna esistesse portano un
+                    # 'entita' fatto di identificatori di un database
+                    # cancellato: numeri che oggi indicano qualcun altro.
+                    # Riattaccarle con quelli ha messo la correzione di una
+                    # bambina di sedici mesi addosso al Sindaco. Il numero
+                    # non e' un indizio debole, e' un falso amico.
+                    d["_senza_chiave"] = True
+                fuori["orfane"].append(d)
+        except sqlite3.OperationalError:
+            pass
+        try:
+            for riga in conn.execute("SELECT * FROM riletture"):
+                d = dict(riga)
+                d["_atto_chiave"] = atti.get(d.get("atto"))
+                fuori["riletture"].append(d)
+        except sqlite3.OperationalError:
+            pass
+        return fuori
+    finally:
+        conn.close()
+
+
+COLONNE_DECISIONE = (
+    "quando", "azione", "entita", "motivo", "confidenza", "evidenze",
+    "contraddizioni", "atti", "decisore", "modello", "versione_prompt",
+    "versione_algoritmo", "disfa",
+)
+
+
+def ripristina(percorso: Path, conservato: dict) -> dict:
+    """Rimette le decisioni e le riletture nel database appena rifatto.
+
+    Cio' che non si riattacca finisce in ``decisioni_orfane`` con il
+    motivo scritto: un archivio che perde una decisione in silenzio e'
+    peggio di uno che la mette da parte e lo dice.
+
+    E l'orfanezza non e' definitiva. Le orfane dei giri precedenti
+    rientrano in questa stessa fila e si ritentano: una menzione puo'
+    benissimo ricomparire — una trascrizione aggiunta, un cognome che il
+    glossario ha smesso di travisare — e allora la decisione torna a
+    valere. ``riprese`` dice quante ne sono tornate.
+    """
+    if not conservato:
+        return {"decisioni": 0, "riletture": 0, "orfane": 0, "riprese": 0}
+    from history_maker.ricostruzione import modello as _modello
+    from history_maker.ricostruzione import rilettura as _rilettura
+
+    conn = sqlite3.connect(percorso)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(_modello.SCHEMA_SQL)
+        conn.executescript(_rilettura.SCHEMA_TABELLA)
+        conn.executescript(SCHEMA_ORFANE)
+        menzioni = _chiavi_delle_menzioni(conn)["per_chiave"]
+        atti = _chiavi_degli_atti(conn)["per_chiave"]
+        vecchio_a_nuovo: dict = {}
+        conti = {"decisioni": 0, "riletture": 0, "orfane": 0,
+                 "riprese": 0}
+        segnaposto = ",".join("?" * len(COLONNE_DECISIONE))
+
+        # Le orfane dei giri precedenti rientrano nella stessa fila delle
+        # decisioni, in ordine di identificatore originale: e' l'unico
+        # modo perche' un 'disfa' trovi il suo bersaglio anche quando il
+        # bersaglio era orfano e la decisione che lo supera no.
+        tutte = sorted(
+            list(conservato.get("decisioni", [])) + list(conservato.get("orfane", [])),
+            key=lambda d: (d.get("id") is None, d.get("id") or 0),
+        )
+        for d in tutte:
+            chiavi = d.get("_entita_chiavi") or []
+            nuove = [menzioni.get(k) if k else None for k in chiavi]
+            if d.get("_senza_chiave") or (chiavi and any(x is None for x in nuove)):
+                conn.execute(
+                    "INSERT INTO decisioni_orfane ("
+                    + ",".join(COLONNE_DECISIONE)
+                    + ",perche,id_originale,chiavi) VALUES ("
+                    + segnaposto + ",?,?,?)",
+                    tuple(d.get(c) for c in COLONNE_DECISIONE)
+                    + ("nessuna chiave stabile: il bersaglio non e' ricostruibile"
+                       if d.get("_senza_chiave") else
+                       "una o piu' menzioni non esistono piu' dopo la ricostruzione",
+                       d.get("id"), json.dumps(chiavi)),
+                )
+                conti["orfane"] += 1
+                continue
+            valori = [d.get(c) for c in COLONNE_DECISIONE]
+            valori[COLONNE_DECISIONE.index("entita")] = json.dumps(nuove)
+            # 'disfa' nomina un'altra decisione: si traduce con la mappa
+            # degli identificatori gia' riscritti.
+            if d.get("disfa") is not None:
+                valori[COLONNE_DECISIONE.index("disfa")] = vecchio_a_nuovo.get(d["disfa"])
+            cursore = conn.execute(
+                "INSERT INTO decisioni (" + ",".join(COLONNE_DECISIONE)
+                + ") VALUES (" + segnaposto + ")", tuple(valori))
+            if d["id"] is not None:
+                vecchio_a_nuovo[d["id"]] = cursore.lastrowid
+            conti["decisioni"] += 1
+            if d.get("perche"):
+                conti["riprese"] += 1        # era orfana, ha ritrovato la sua menzione
+
+        for r in conservato.get("riletture", []):
+            nuovo = atti.get(r.get("_atto_chiave")) if r.get("_atto_chiave") else None
+            if nuovo is None:
+                continue        # l'atto non c'e' piu': la risposta non ha bersaglio
+            conn.execute(
+                "INSERT OR REPLACE INTO riletture (chiave, atto, immagine, esito, "
+                "campi, quante_correzioni, modello, versione_prompt, "
+                "versione_contesto, quando, stato) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (r["chiave"], nuovo, r["immagine"], r["esito"], r["campi"],
+                 r["quante_correzioni"], r["modello"], r["versione_prompt"],
+                 r["versione_contesto"], r["quando"], r["stato"]),
+            )
+            conti["riletture"] += 1
+        conn.commit()
+        return conti
+    finally:
+        conn.close()

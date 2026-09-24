@@ -43,7 +43,7 @@ Cosa non fa
 -----------
 
 Non inventa nuove pagine da rileggere oltre a quelle che un'anomalia ha
-gia' segnalato: la selezione resta quella di ``rilettura.casi`` e
+gia' segnalato: la selezione resta quella di ``rilettura.da_rileggere`` e
 ``arbitro.casi``, che guardano la coda dei dubbi. Un secolo di registri
 sono settemila atti; rileggerli tutti a prescindere costerebbe giorni di
 quota per riottenere in gran parte cio' che c'e' gia'. Il ciclo estende
@@ -214,11 +214,15 @@ def esegui(
         giro = Giro(numero=numero, schede_prima=schede_prima, schede_dopo=schede_dopo)
 
         # 2. Rileggi: le pagine con un dubbio che l'immagine puo' sciogliere.
+        # 'da_rileggere' restituisce facciate (liste di atti), che e' cio'
+        # che 'prepara' si aspetta: 'casi' invece elenca atti singoli, e
+        # passarlo qui faceva cadere il primo giro con
+        # TypeError: 'int' object is not iterable.
         conn = sqlite3.connect(percorso)
         conn.row_factory = sqlite3.Row
-        atti = rilettura.casi(conn, pagine_per_giro)
-        if atti:
-            dossier = rilettura.prepara(conn, atti, config.immagini)
+        gruppi = rilettura.da_rileggere(conn, pagine_per_giro)
+        if gruppi:
+            dossier = rilettura.prepara(conn, gruppi, config.immagini)
             esiti = rilettura.esegui(config, conn, dossier, tetto=len(dossier))
             conn.commit()
             giro.correzioni_lettura = esiti["correzioni"]

@@ -178,6 +178,70 @@ def test_i_dubbi_di_identita_non_mandano_nessuno_all_immagine(conn):
     assert rilettura.casi(conn, 10) == []
 
 
+# --- la facciata: piu' atti, una chiamata sola ----------------------------
+
+def test_gli_atti_della_stessa_facciata_stanno_in_una_chiamata(conn):
+    """Su una facciata di registro stanno due, tre, fino a nove atti.
+
+    Chiederli uno per volta vuol dire caricare la stessa immagine altre
+    tante volte, e l'immagine e' quasi tutto il costo della chiamata.
+    """
+    for numero in (1, 2, 3):
+        atto(conn, numero, immagine="pag-4.jpg")
+        persona(conn, 100 + numero, numero)
+    atto(conn, 4, immagine="pag-5.jpg")
+    persona(conn, 104, 4)
+    assert rilettura.facciate(conn, [1, 2, 3, 4]) == [[1, 2, 3], [4]]
+
+
+def test_la_facciata_tiene_l_ordine_della_coda(conn):
+    """La prima facciata resta quella dell'atto piu' urgente."""
+    for numero, pagina in ((1, "a.jpg"), (2, "b.jpg"), (3, "a.jpg")):
+        atto(conn, numero, immagine=pagina)
+        persona(conn, 100 + numero, numero)
+    assert rilettura.facciate(conn, [2, 3]) == [[2], [1, 3]]
+
+
+def test_la_facciata_si_porta_dietro_gli_atti_non_ancora_letti(conn):
+    """L'atto accanto e' gratis: l'immagine parte comunque.
+
+    E' anche il modo di non lasciare indietro l'atto n. 4 solo perche'
+    l'anomalia stava sul n. 3.
+    """
+    for numero in (1, 2, 3):
+        atto(conn, numero, immagine="pag-4.jpg")
+        persona(conn, 100 + numero, numero)
+    assert rilettura.facciate(conn, [2]) == [[1, 2, 3]]
+
+
+def test_la_facciata_non_ripesca_gli_atti_gia_risposti(conn):
+    for numero in (1, 2, 3):
+        atto(conn, numero, immagine="pag-4.jpg")
+        persona(conn, 100 + numero, numero)
+    conn.executescript(rilettura.SCHEMA_TABELLA)
+    conn.execute("INSERT INTO riletture (chiave, atto, stato) "
+                 "VALUES ('x', 1, 'risposta')")
+    assert rilettura.facciate(conn, [2]) == [[2, 3]]
+
+
+def test_un_atto_chiesto_da_solo_resta_da_solo(conn):
+    """'--atto 30' chiede quell'atto, non la sua facciata."""
+    for numero in (1, 2):
+        atto(conn, numero, immagine="pag-4.jpg")
+        persona(conn, 100 + numero, numero)
+    assert rilettura.facciate(conn, [2], completa=False) == [[2]]
+
+
+def test_da_rileggere_conta_facciate_non_atti(conn):
+    """'--quante' e' il numero di chiamate, che e' cio' che la quota conta."""
+    for numero in range(1, 7):
+        atto(conn, numero, immagine=f"pag-{(numero - 1) // 2}.jpg")
+        persona(conn, 100 + numero, numero)
+    gruppi = rilettura.da_rileggere(conn, 2, tutte=True)
+    assert gruppi == [[1, 2], [3, 4]]
+    assert sum(len(g) for g in gruppi) == 4     # due chiamate, quattro atti
+
+
 # --- il prompt -------------------------------------------------------------
 
 @pytest.fixture
@@ -326,6 +390,115 @@ def test_la_chiave_cambia_se_cambia_il_modello(dato):
             != rilettura.chiave(dato, "gemini-3.5-flash"))
 
 
+# --- la facciata: il prompt, la cache, lo smistamento ----------------------
+
+@pytest.fixture
+def facciata_doppia(conn):
+    """Due atti sulla stessa immagine, ciascuno con la sua menzione."""
+    for numero, menzione, individuo in ((1, 100, 10), (2, 200, 20)):
+        atto(conn, numero, immagine="pag-4.jpg")
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,'Nome','Cognome',1)", (individuo, f"P{individuo}")
+        )
+        conn.execute(
+            "INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+            "VALUES (?,?,'defunto','Nome','Cognome','atto')", (menzione, numero)
+        )
+        conn.execute("INSERT INTO menzioni (persona, individuo, certa) "
+                     "VALUES (?,?,1)", (menzione, individuo))
+    return {
+        "immagine": "pag-4.jpg", "impronta_immagine": "abc",
+        "_percorso_immagine": "pag-4.jpg",
+        "atti": [contesto.per_documento(conn, 1), contesto.per_documento(conn, 2)],
+    }
+
+
+def test_una_facciata_da_un_atto_solo_non_invalida_la_cache(dato):
+    """Quattrocentoquarantanove risposte sono gia' state pagate.
+
+    Se l'accorpamento cambiasse anche di una virgola il testo o la chiave
+    di una facciata da un atto solo, si butterebbero tutte.
+    """
+    facciata = {"immagine": dato["atto"]["immagine"], "impronta_immagine": None,
+                "_percorso_immagine": "x", "atti": [dato]}
+    voc = {"nomi": ["Marzio"]}
+    assert rilettura.istruzione_facciata(facciata, voc) == rilettura.istruzione(dato, voc)
+    assert (rilettura.chiave_facciata(facciata, "m", voc)
+            == rilettura.chiave(dato, "m", voc))
+    assert rilettura._chiave_riga("impronta", dato, 1) == "impronta"
+
+
+def test_gli_atti_di_una_facciata_hanno_chiavi_diverse(facciata_doppia):
+    """'riletture.chiave' e' una chiave primaria.
+
+    Con la stessa chiave l'ultimo atto scritto cancellerebbe i primi, e
+    la facciata risulterebbe letta per un atto solo.
+    """
+    dati = facciata_doppia["atti"]
+    assert len({rilettura._chiave_riga("impronta", d, len(dati)) for d in dati}) == 2
+
+
+def test_il_contorno_del_prompt_si_manda_una_volta_sola(facciata_doppia):
+    """E' l'unico sperpero che l'accorpamento non toglie da se'."""
+    testo = rilettura.istruzione_facciata(
+        facciata_doppia, {"nomi": ["Marzio"], "cognomi": ["Lella"]})
+    assert testo.count("IL VOCABOLARIO DEL PAESE") == 1
+    assert testo.count("LA TRASCRIZIONE PRECEDENTE") == 2
+
+
+def test_la_risposta_di_una_facciata_si_smista_sugli_atti(facciata_doppia):
+    fuori = rilettura._per_atto(
+        {"atti": [
+            {"atto": 1, "esito": "CONFERMATO", "campi": [_campo(100, "nome", "X")]},
+            {"atto": 2, "esito": "AMBIGUO", "campi": [_campo(200, "nome", "Y")]},
+        ]},
+        facciata_doppia["atti"],
+    )
+    assert fuori[1]["esito"] == "CONFERMATO"
+    assert fuori[2]["esito"] == "AMBIGUO"
+    assert fuori[1]["campi"][0]["menzione"] == 100
+    assert fuori[2]["campi"][0]["menzione"] == 200
+
+
+def test_la_menzione_batte_l_identificativo_dell_atto(facciata_doppia):
+    """L'errore da temere: attribuire a un atto cio' che si legge nell'altro.
+
+    La menzione e' l'ancora solida — il modello ce l'ha davanti scritta,
+    non la inventa — mentre l'identificativo dell'atto glielo si chiede
+    di riecheggiare, ed e' riecheggiare che sbaglia.
+    """
+    fuori = rilettura._per_atto(
+        {"atti": [{"atto": 1, "esito": "CONFERMATO",
+                   "campi": [_campo(200, "nome", "Y")]}]},
+        facciata_doppia["atti"],
+    )
+    assert fuori[2]["campi"][0]["menzione"] == 200
+    assert fuori[1]["campi"] == []
+
+
+def test_una_risposta_piatta_si_smista_lo_stesso(facciata_doppia):
+    """Un modello a cui si chiede una forma non sempre la da', e una
+    risposta buona nella forma sbagliata non va buttata."""
+    fuori = rilettura._per_atto(
+        {"esito": "CONFERMATO",
+         "campi": [_campo(100, "nome", "X"), _campo(200, "nome", "Y")]},
+        facciata_doppia["atti"],
+    )
+    assert fuori[1]["campi"][0]["menzione"] == 100
+    assert fuori[2]["campi"][0]["menzione"] == 200
+    assert fuori[1]["esito"] == fuori[2]["esito"] == "CONFERMATO"
+
+
+def test_una_menzione_di_nessun_atto_non_si_perde(facciata_doppia):
+    """Resta nel registro, dove '_correggi' la scartera' lasciandone traccia."""
+    fuori = rilettura._per_atto(
+        {"esito": "CONFERMATO", "campi": [_campo(999, "nome", "X")]},
+        facciata_doppia["atti"],
+    )
+    assert sum(len(v["campi"]) for v in fuori.values()) == 1
+
+
 # --- le correzioni ---------------------------------------------------------
 
 def _campo(menzione, campo, lettura, verdetto="CONFLITTO_CON_LA_TRASCRIZIONE",
@@ -444,6 +617,103 @@ def test_attestazioni_conta_le_persone_non_le_menzioni(conn):
     assert rilettura._attestazioni(conn, "cognome", "Lella") == 3
 
 
+def test_attestazioni_vede_anche_le_letture_scartate(conn):
+    """La forma canonica non e' tutto quello che l'archivio ha letto.
+
+    Il consolidamento riconduce le grafie rare alla forma dominante, e
+    da fuori sembrano non essere mai esistite: sono proprio quelle su
+    cui il veto viene interrogato.
+    """
+    conn.execute(
+        "INSERT INTO individui (id, chiave, nome, cognome, varianti_nome, menzioni) "
+        "VALUES (920, 'P920', 'Mitrodoro', 'Marianacci', ?, 12)",
+        ("Metrodoro | Metodoro | Metro | Mitrodoro",),
+    )
+    assert rilettura._attestazioni(conn, "nome", "Metro") == 1
+    assert rilettura._attestazioni(conn, "nome", "Mitrodoro") == 1
+    assert rilettura._attestazioni(conn, "nome", "Cynodoro") == 0
+
+
+def test_una_forma_consolidata_sotto_un_altra_non_e_mai_vista(conn, dato):
+    """Il rovescio esatto di 'Cynodoro', ed e' costato una scheda doppia.
+
+    'Metro Marianacci' e' scritto cosi' due volte nell'atto del 1809 e
+    letto cosi' in altri due atti, ma sta in archivio sotto
+    'Mitrodoro'. Contando la sola forma canonica il veto lo trattava
+    come una parola mai esistita e buttava la lettura giusta: il
+    calzolaio del 1809 restava una scheda a se', separata dalla
+    propria — stessa moglie, stesso anno di nascita, stesso mestiere.
+    """
+    for numero in range(5):        # 'Marzio', la forma vecchia, e' ben attestata
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,?,?,1)", (930 + numero, f"P{930+numero}", "Marzio", "Vario"),
+        )
+    conn.execute(
+        "INSERT INTO individui (id, chiave, nome, cognome, varianti_nome, menzioni) "
+        "VALUES (940, 'P940', 'Mitrodoro', 'Vario', ?, 12)", ("Mitrodoro | Metro",),
+    )
+    quante = rilettura._correggi(
+        conn, dato, {"campi": [_campo(100, "nome", "Metro")]}, "gemini-3.6-flash"
+    )
+    assert quante == 1
+
+
+def test_il_cognome_incollato_nel_nome_viene_tolto(conn, dato):
+    """Il caso della firma: «Giuseppe Pizzi Sindaco».
+
+    Il modello legge la riga intera e la mette nel campo che gli e'
+    stato chiesto. La lettura e' giusta, il dato no: 'nome' = «Giuseppe
+    Pizzi» accanto a 'cognome' = «Pizzi» fa «Giuseppe Pizzi Pizzi», e
+    la forma canonica mai vista trasforma il nome piu' comune del paese
+    in un indizio raro.
+    """
+    quante = rilettura._correggi(
+        conn, dato,
+        {"campi": [_campo(100, "nome", "Giuseppe d'Andria Motta")]},
+        "gemini-3.6-flash",
+    )
+    assert quante == 1
+    riga = conn.execute("SELECT evidenze FROM decisioni").fetchone()
+    assert riga["evidenze"] == "nome=Giuseppe"
+
+
+def test_un_nome_tutto_cognome_non_diventa_una_correzione(conn, dato):
+    """Sbucciato non resta niente: non c'e' nessun nome da registrare."""
+    quante = rilettura._correggi(
+        conn, dato,
+        {"campi": [_campo(100, "nome", "d'Andria Motta")]},
+        "gemini-3.6-flash",
+    )
+    assert quante == 0
+    assert conn.execute("SELECT COUNT(*) FROM decisioni").fetchone()[0] == 0
+
+
+def test_il_cognome_non_si_sbuccia_mai(conn, dato):
+    """'Di Nardo' e' un cognome intero, non un nome piu' un cognome.
+
+    Gli atti scrivono «nome cognome» e mai il contrario: togliere un
+    pezzo dal cognome rovinerebbe le forme composte, che in questo
+    paese sono la meta' dei casati.
+    """
+    conn.execute(
+        "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+        "VALUES (950, 'P950', 'Nardo', 'Rossi', 1)"
+    )
+    conn.execute(
+        "INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+        "VALUES (101, 1, 'testimone', 'Nardo', 'Rossi', 'atto')"
+    )
+    conn.execute("INSERT INTO menzioni (persona, individuo, certa) VALUES (101, 950, 1)")
+    quante = rilettura._correggi(
+        conn, contesto.per_documento(conn, 1),
+        {"campi": [_campo(101, "cognome", "Di Nardo")]}, "gemini-3.6-flash",
+    )
+    assert quante == 1
+    riga = conn.execute("SELECT evidenze FROM decisioni").fetchone()
+    assert riga["evidenze"] == "cognome=Di Nardo"
+
+
 def test_attestazioni_su_professione_guarda_i_fatti(conn):
     conn.execute(
         "INSERT INTO fatti (individuo, tipo, grezzo, interpretato) "
@@ -487,3 +757,585 @@ def test_una_risposta_illeggibile_non_fa_cadere_tutto():
     assert rilettura._interpreta("") == {}
     assert rilettura._interpreta('{"esito": "CONFERMATO"}') == {"esito": "CONFERMATO"}
     assert rilettura._interpreta('[{"esito": "CONFERMATO"}]') == {"esito": "CONFERMATO"}
+
+
+# --- tornare su cio' che si e' deciso prima di sapere ----------------------
+
+def test_una_frase_non_e_un_nome():
+    assert rilettura._forma_da_nome("Giuseppe")
+    assert rilettura._forma_da_nome("Maria Nicola")
+    assert rilettura._forma_da_nome("Di Nardo")
+    assert not rilettura._forma_da_nome("Dantpilo Finan' di Desio Viene")
+    assert not rilettura._forma_da_nome("Siaino oppure Sianis (nel testo si legge)")
+    assert not rilettura._forma_da_nome("ignoto")
+    assert not rilettura._forma_da_nome("")
+
+
+def _correzione(conn, menzione, campo, valore, versione="1.0.0"):
+    from history_maker.ricostruzione import registro
+    return registro.annota(
+        conn, "correzione", (menzione,), "presa allora", confidenza=0.95,
+        decisore="gemini", modello="vecchio", versione_prompt=versione,
+        evidenze=(f"{campo}={valore}",),
+    )
+
+
+def test_il_veto_si_applica_anche_a_ritroso(conn, dato):
+    """Le prime 437 pagine sono state lette prima che il veto esistesse.
+
+    Ripassarle alla regola di oggi e' l'unico modo di non avere due
+    epoche con due metri diversi.
+    """
+    for numero in range(5):        # 'Marzio' e' ben attestato
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,'Marzio','Vario',1)", (960 + numero, f"P{960+numero}")
+        )
+    _correzione(conn, 100, "nome", "Cynodoro")
+    verdetti = rilettura.ripassa_al_veto(conn, "1.0.0")
+    assert [v["motivo"] for v in verdetti] == ["non plausibile"]
+    assert verdetti[0]["sostituto"] is None
+
+
+def test_a_ritroso_il_cognome_nel_nome_si_sbuccia_invece_di_annullarsi(conn, dato):
+    """La lettura era giusta, solo impacchettata male: buttarla e' peggio."""
+    _correzione(conn, 100, "nome", "Giuseppe d'Andria Motta")
+    verdetti = rilettura.ripassa_al_veto(conn, "1.0.0")
+    assert verdetti[0]["motivo"] == "cognome nel nome"
+    assert verdetti[0]["sostituto"] == "Giuseppe"
+
+
+def test_a_ritroso_non_si_cancella_niente(conn, dato):
+    """La riga vecchia resta, marcata da quella che la disfa."""
+    from history_maker.ricostruzione import registro
+    vecchia = _correzione(conn, 100, "cognome", "ignoto")
+    assert rilettura.ripassa_al_veto(conn, "1.0.0", applica=True)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM decisioni WHERE id = ?", (vecchia,)
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM decisioni WHERE disfa = ?", (vecchia,)
+    ).fetchone()[0] == 1
+    # e non vale piu': la trascrizione torna a dire la sua
+    assert (100, "cognome") not in registro.correzioni(conn)
+
+
+def test_a_ritroso_una_correzione_che_regge_non_si_tocca(conn, dato):
+    _correzione(conn, 100, "cognome", "Bellucci")
+    assert rilettura.ripassa_al_veto(conn, "1.0.0", applica=True) == []
+
+
+def test_a_ritroso_l_eta_non_si_giudica(conn, dato):
+    """Un'eta' non ha un vocabolario da rispettare: non c'e' regola con
+    cui ripassarla, e inventarne una adesso sarebbe peggio."""
+    _correzione(conn, 100, "eta", "quaranta")
+    assert rilettura.ripassa_al_veto(conn, "1.0.0") == []
+
+
+def test_le_pagine_di_un_vecchio_prompt_tornano_in_coda(conn):
+    atto(conn, 1)
+    persona(conn, 100, 1)
+    conn.executescript(rilettura.SCHEMA_TABELLA)
+    conn.execute("INSERT INTO riletture (chiave, atto, versione_prompt, stato) "
+                 "VALUES ('x', 1, '1.0.0', 'risposta')")
+    assert rilettura.tutti_gli_atti(conn, 10) == []      # oggi e' fuori coda
+
+    assert rilettura.da_rifare(conn, "1.0.0", applica=True) == [1]
+    assert rilettura.tutti_gli_atti(conn, 10) == [1]     # ci torna
+    # ma la risposta vecchia resta leggibile: e' l'unica prova di come
+    # rispondeva quel prompt
+    riga = conn.execute("SELECT stato FROM riletture WHERE chiave = 'x'").fetchone()
+    assert riga["stato"] == "superata"
+
+
+# --- l'atto che sborda sulla scansione dopo -------------------------------
+
+def test_un_atto_solo_sulla_pagina_si_porta_la_scansione_dopo(conn, tmp_path):
+    """Il difetto trovato eseguendo: 14 atti su facciate da uno, 14
+    correzioni; 44 atti su facciate intere, zero.
+
+    In 139 registri l'atto comincia sulla pagina destra e finisce in
+    cima alla scansione dopo. Senza quella, il modello ha sotto gli
+    occhi la coda dell'atto PRECEDENTE e non la fine del proprio — e
+    battezza il neonato col nome del bambino di un altro.
+    """
+    for numero, pagina in ((1, "reg/0040.jpg"), (2, "reg/0041.jpg")):
+        atto(conn, numero, immagine=pagina)
+        persona(conn, 100 + numero, numero)
+    for pagina in ("0040.jpg", "0041.jpg"):
+        (tmp_path / "reg").mkdir(exist_ok=True)
+        (tmp_path / "reg" / pagina).write_bytes(b"finta immagine " + pagina.encode())
+
+    facciata = rilettura.prepara(conn, [[1]], tmp_path)[0]
+    assert facciata["seguito"] == "reg/0041.jpg"
+    assert facciata["impronta_seguito"]
+    # e il prompt deve dire cos'e', o si rifa' lo stesso errore al contrario
+    testo = rilettura.istruzione_facciata(facciata)
+    assert "IMMAGINE 2" in testo and "atto SEGUENTE" in testo
+
+
+def test_una_facciata_con_piu_atti_non_si_porta_niente(conn, tmp_path):
+    """Se su una pagina ci stanno due atti sono corti e finiscono dove
+    cominciano: la seconda immagine sarebbe un costo senza ragione."""
+    for numero in (1, 2):
+        atto(conn, numero, immagine="reg/0040.jpg")
+        persona(conn, 100 + numero, numero)
+    atto(conn, 3, immagine="reg/0041.jpg")
+    persona(conn, 103, 3)
+    (tmp_path / "reg").mkdir()
+    for pagina in ("0040.jpg", "0041.jpg"):
+        (tmp_path / "reg" / pagina).write_bytes(b"x")
+    facciata = rilettura.prepara(conn, [[1, 2]], tmp_path)[0]
+    assert "seguito" not in facciata
+
+
+def test_il_seguito_non_esce_dal_registro(conn, tmp_path):
+    """L'ultimo atto di un registro non prende la prima pagina del
+    registro dopo: sarebbe un altro anno e un'altra mano."""
+    atto(conn, 1, immagine="reg-a/0040.jpg")
+    persona(conn, 101, 1)
+    atto(conn, 2, immagine="reg-b/0001.jpg")
+    persona(conn, 102, 2)
+    for cartella, pagina in (("reg-a", "0040.jpg"), ("reg-b", "0001.jpg")):
+        (tmp_path / cartella).mkdir()
+        (tmp_path / cartella / pagina).write_bytes(b"x")
+    facciata = rilettura.prepara(conn, [[1]], tmp_path)[0]
+    assert "seguito" not in facciata
+
+
+def test_il_seguito_cambia_la_chiave_ma_solo_a_chi_ce_l_ha(conn, tmp_path, dato):
+    """Le facciate intere tengono la chiave di prima — le loro risposte
+    valgono ancora. Quelle spezzate la cambiano, ed e' voluto: erano
+    proprio le risposte da rifare."""
+    intera = {"immagine": dato["atto"]["immagine"], "impronta_immagine": None,
+              "_percorso_immagine": "x", "atti": [dato]}
+    assert (rilettura.chiave_facciata(intera, "m")
+            == rilettura.chiave(dato, "m"))
+    spezzata = dict(intera, seguito="reg/0041.jpg", impronta_seguito="abc")
+    assert rilettura.chiave_facciata(spezzata, "m") != rilettura.chiave(dato, "m")
+
+
+def test_si_toglie_dal_nome_anche_un_cognome_che_non_era_il_suo(conn, dato):
+    """«Giovanni Maria Nanni» riletto «Giovanni Marianacci».
+
+    La guardia che confronta col cognome trascritto non scatta — nessuna
+    delle due parole e' 'Nanni' — perche' il modello ha corretto insieme
+    nome e cognome. La domanda giusta la fa all'archivio: in questo
+    paese, quest'ultima parola e' un cognome o un nome?
+    """
+    for numero in range(12):
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,'Vario','Marianacci',1)", (970 + numero, f"P{970+numero}")
+        )
+    quante = rilettura._correggi(
+        conn, dato,
+        {"campi": [_campo(100, "nome", "Giovanni Marianacci")]},
+        "gemini-3.6-flash",
+    )
+    assert quante == 1
+    assert conn.execute("SELECT evidenze FROM decisioni").fetchone()[0] == "nome=Giovanni"
+
+
+def test_un_nome_che_e_anche_cognome_non_si_tocca(conn, dato):
+    """'Salvatore' e' un cognome del paese ed e' anche un nome vero:
+    245 contro 92. Toglierlo da 'Carmine Salvatore' sarebbe un danno."""
+    for numero in range(10):
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,'Vario','Salvatore',1)", (980 + numero, f"P{980+numero}")
+        )
+    for numero in range(6):        # attestato anche come NOME
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,'Salvatore','Altro',1)", (995 + numero, f"P{995+numero}")
+        )
+    assert rilettura._senza_il_cognome(
+        {"cognome": "Vario"}, "nome", "Carmine Salvatore", conn) == "Carmine Salvatore"
+
+
+def test_sbucciare_non_lascia_una_particella(conn):
+    """'Di Laudo' non deve diventare 'Di'."""
+    for numero in range(12):
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,'Vario','Laudo',1)", (940 + numero, f"P{940+numero}")
+        )
+    assert rilettura._senza_il_cognome(
+        {"cognome": "X"}, "nome", "Di Laudo", conn) == "Di Laudo"
+
+
+# --- il muro del giorno e l'intoppo di trenta secondi ----------------------
+
+class _MotoreCapriccioso:
+    """Dice di no qualche volta, poi risponde."""
+
+    def __init__(self, rifiuti, giornaliera=False, attesa=1.0):
+        self.rifiuti, self.giornaliera, self.attesa = rifiuti, giornaliera, attesa
+        self.chiamate = 0
+
+    def esegui(self, richiesta):
+        from history_maker.backend import LimiteUsoRaggiunto, Risposta
+        self.chiamate += 1
+        if self.chiamate <= self.rifiuti:
+            raise LimiteUsoRaggiunto(
+                "servizio occupato", attesa_s=self.attesa,
+                giornaliera=self.giornaliera,
+            )
+        return Risposta(ok=True, testo='{"esito": "CONFERMATO", "campi": []}')
+
+
+def test_una_congestione_non_e_la_fine_della_giornata(monkeypatch):
+    """Il difetto visto eseguendo: 29 facciate su 280, e il comando
+    annuncia la quota finita con 93 richieste su 500.
+
+    Il 503 'high demand' passa da solo in mezzo minuto. Fermare per
+    quello un lavoro di quattrocento chiamate e' buttare la giornata.
+    """
+    monkeypatch.setattr(rilettura.time, "sleep", lambda _: None)
+    esiti = {"quota_esaurita": False, "attese": 0}
+    motore = _MotoreCapriccioso(rifiuti=2)
+    risposta = rilettura._chiedi(motore, object(), esiti)
+    assert risposta is not None and risposta.ok
+    assert esiti["attese"] == 2 and not esiti["quota_esaurita"]
+    assert motore.chiamate == 3          # ha ritentato la stessa facciata
+
+
+def test_il_muro_del_giorno_invece_ferma(monkeypatch):
+    monkeypatch.setattr(rilettura.time, "sleep", lambda _: None)
+    esiti = {"quota_esaurita": False, "attese": 0}
+    motore = _MotoreCapriccioso(rifiuti=1, giornaliera=True)
+    assert rilettura._chiedi(motore, object(), esiti) is None
+    assert esiti["quota_esaurita"]
+    assert motore.chiamate == 1          # non insiste contro un muro
+
+
+def test_un_servizio_che_non_torna_su_non_si_ritenta_all_infinito(monkeypatch):
+    monkeypatch.setattr(rilettura.time, "sleep", lambda _: None)
+    esiti = {"quota_esaurita": False, "attese": 0}
+    motore = _MotoreCapriccioso(rifiuti=99)
+    assert rilettura._chiedi(motore, object(), esiti) is None
+    assert esiti["quota_esaurita"]
+    assert motore.chiamate <= 6          # il tetto ai ritentativi tiene
+
+
+# --- i verdetti che il modello si inventa ---------------------------------
+
+def test_i_sinonimi_del_verdetto_si_riconducono(conn, dato):
+    """Trentasei letture buttate perche' il confronto era per stringa esatta.
+
+    Il modello dice ERRORE_NELLA_TRASCRIZIONE o CORRETTO_DA_IMMAGINE
+    invece di CONFLITTO_CON_LA_TRASCRIZIONE: per un lettore e' lo stesso
+    verdetto, per un '!=' e' un'altra cosa, e la correzione spariva.
+    """
+    for grezzo in ("ERRORE_NELLA_TRASCRIZIONE", "CORRETTO_DA_IMMAGINE",
+                   "errore di trascrizione", "CORRETTO"):
+        assert rilettura._verdetto_canonico(grezzo) == "CONFLITTO_CON_LA_TRASCRIZIONE"
+    for grezzo in ("CONFORME", "CONFERMATO_DALL_IMMAGINE", "CONFERMATO"):
+        assert rilettura._verdetto_canonico(grezzo) == "CONFERMATO"
+
+
+def test_un_sinonimo_diventa_una_correzione(conn, dato):
+    quante = rilettura._correggi(
+        conn, dato,
+        {"campi": [_campo(100, "cognome", "Lella", "ERRORE_NELLA_TRASCRIZIONE")]},
+        "gemini-3.6-flash",
+    )
+    assert quante == 1
+
+
+def test_corretto_dal_contesto_resta_inerte(conn, dato):
+    """Dice che il modello ha cambiato la lettura per farla tornare col
+    grafo: e' cio' che il modulo vieta al primo paragrafo, e non deve
+    diventare una correzione per la porta di servizio dei sinonimi."""
+    quante = rilettura._correggi(
+        conn, dato,
+        {"campi": [_campo(100, "cognome", "Lella", "CORRETTO_DAL_CONTESTO")]},
+        "gemini-3.6-flash",
+    )
+    assert quante == 0
+
+
+def test_un_verdetto_sconosciuto_non_diventa_un_conflitto(conn, dato):
+    """Allargare il confronto a 'qualunque cosa somigli' sarebbe il modo
+    di trasformare ogni bizzarria in una correzione."""
+    assert rilettura._verdetto_canonico("BOH_VEDIAMO") == "BOH_VEDIAMO"
+    assert rilettura._correggi(
+        conn, dato, {"campi": [_campo(100, "cognome", "Lella", "BOH_VEDIAMO")]},
+        "gemini-3.6-flash") == 0
+
+
+def test_un_refuso_nel_nome_del_verdetto_non_perde_la_correzione(conn, dato):
+    """'CONFLITTO_CON_LA_TRASCRITTORE' e' costato «bavaro» -> «bovaro»
+    a confidenza 0,95."""
+    assert (rilettura._verdetto_canonico("CONFLITTO_CON_LA_TRASCRITTORE")
+            == "CONFLITTO_CON_LA_TRASCRIZIONE")
+    assert (rilettura._verdetto_canonico("CONFLITTO_CON_IL_CONTESTO_FAMILIARE")
+            == "CONFLITTO_CON_IL_CONTESTO")
+    assert rilettura._verdetto_canonico("CONFLITTO_ALTRO") == "CONFLITTO_ALTRO"
+
+
+def test_un_onorifico_non_e_un_cognome():
+    """«Donna Federica Zara» stava in un campo COGNOME: tre parole, dentro
+    il tetto, ma nessun casato comincia per 'Donna'."""
+    assert not rilettura._forma_da_nome("Donna Federica Zara")
+    assert not rilettura._forma_da_nome("Don Mitodoro")
+    assert rilettura._forma_da_nome("Di Nardo")
+    assert rilettura._forma_da_nome("Maria Nicola")
+
+
+def test_una_annotazione_non_e_una_professione(conn, dato):
+    """'contadina' -> «coi [coabitante]»: la parentesi quadra e' il
+    modello che ragiona, non la pagina che parla."""
+    _correzione(conn, 100, "professione", "coi [coabitante]")
+    verdetti = rilettura.ripassa_al_veto(conn, "1.0.0")
+    assert [v["motivo"] for v in verdetti] == ["non e' una lettura, e' un'annotazione"]
+
+
+def test_sbucciare_non_lascia_un_troncone(conn):
+    """«Giuseppe di Tommaso» non deve diventare «Giuseppe di».
+
+    Visto in una passata vera: la guardia toglieva l'ultimo pezzo quando
+    era un cognome del paese, e lasciava appesa la preposizione. Non
+    basta che il resto non SIA una particella: non deve finirci.
+    """
+    for numero in range(12):
+        conn.execute(
+            "INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+            "VALUES (?,?,'Vario','Tommaso',1)", (920 + numero, f"Q{920+numero}")
+        )
+    assert rilettura._senza_il_cognome(
+        {"cognome": "X"}, "nome", "Giuseppe di Tommaso", conn) == "Giuseppe di Tommaso"
+    # ma un composto normale si sbuccia ancora
+    assert rilettura._senza_il_cognome(
+        {"cognome": "X"}, "nome", "Giuseppe Tommaso", conn) == "Giuseppe"
+
+
+# --- la meta' di pagina sbagliata ------------------------------------------
+
+def test_due_letture_prese_dall_atto_accanto_si_scartano(conn):
+    """Il caso vero: il matrimonio n. 8 del 1813.
+
+    La rilettura proponeva di rinominare tutti e quattro i testimoni, e i
+    quattro nomi nuovi erano — nell'ordine — i testimoni dell'atto n. 7,
+    stampati sulla meta' sinistra della stessa scansione. Un atto non
+    occupa una scansione intera: il modello ha sempre sotto gli occhi
+    pezzi di due atti che non sono il suo.
+    """
+    atto(conn, 7, immagine="pag.jpg")
+    atto(conn, 8, immagine="pag.jpg")
+    for numero, (nome, cognome) in enumerate(
+            (("Egidio", "Colaneri"), ("Manasse", "Franchella")), start=1):
+        conn.execute(
+            "INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+            "VALUES (?,7,'testimone',?,?,'atto')", (700 + numero, nome, cognome))
+    for numero, (nome, cognome) in enumerate(
+            (("Vincenzo", "Marianacci"), ("Felice", "Pelliccia")), start=1):
+        conn.execute(
+            "INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+            "VALUES (?,8,'testimone',?,?,'atto')", (800 + numero, nome, cognome))
+    for individuo, persona in ((70, 701), (71, 702), (80, 801), (81, 802)):
+        conn.execute("INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+                     "VALUES (?,?,'x','y',1)", (individuo, f"P{persona}"))
+        conn.execute("INSERT INTO menzioni (persona, individuo, certa) "
+                     "VALUES (?,?,1)", (persona, individuo))
+    dato = contesto.per_documento(conn, 8)
+
+    # due letture che vengono tutt'e due dall'atto 7: si buttano insieme
+    quante = rilettura._correggi(
+        conn, dato,
+        {"campi": [_campo(801, "nome", "Egidio"), _campo(802, "nome", "Manasse")]},
+        "gemini-3.6-flash",
+    )
+    assert quante == 0
+    assert conn.execute("SELECT COUNT(*) FROM decisioni").fetchone()[0] == 0
+
+
+def test_una_sola_coincidenza_non_basta_a_bocciare(conn):
+    """In un paese di poche migliaia di anime gli stessi nomi tornano di
+    continuo: bocciare su una somiglianza sola perderebbe letture buone."""
+    atto(conn, 7, immagine="pag.jpg")
+    atto(conn, 8, immagine="pag.jpg")
+    conn.execute("INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+                 "VALUES (701,7,'testimone','Egidio','Colaneri','atto')")
+    conn.execute("INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+                 "VALUES (801,8,'testimone','Vincenzo','Marianacci','atto')")
+    for individuo, persona in ((70, 701), (80, 801)):
+        conn.execute("INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+                     "VALUES (?,?,'x','y',1)", (individuo, f"P{persona}"))
+        conn.execute("INSERT INTO menzioni (persona, individuo, certa) "
+                     "VALUES (?,?,1)", (persona, individuo))
+    dato = contesto.per_documento(conn, 8)
+    quante = rilettura._correggi(
+        conn, dato, {"campi": [_campo(801, "nome", "Egidio")]}, "gemini-3.6-flash")
+    assert quante == 1
+
+
+def test_un_valore_gia_presente_nell_atto_non_e_copiato(conn):
+    """Se la parola c'e' gia' anche in questo atto, non viene da fuori:
+    due fratelli omonimi o un padre e un figlio si chiamano davvero uguale."""
+    atto(conn, 7, immagine="pag.jpg")
+    atto(conn, 8, immagine="pag.jpg")
+    conn.execute("INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+                 "VALUES (701,7,'testimone','Egidio','Colaneri','atto')")
+    conn.execute("INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+                 "VALUES (801,8,'padre','Egidio','Marianacci','atto')")
+    conn.execute("INSERT INTO persone (id, atto, ruolo, nome, cognome, cognome_origine) "
+                 "VALUES (802,8,'testimone','Vincenzo','Pelliccia','atto')")
+    for individuo, persona in ((70, 701), (80, 801), (81, 802)):
+        conn.execute("INSERT INTO individui (id, chiave, nome, cognome, menzioni) "
+                     "VALUES (?,?,'x','y',1)", (individuo, f"P{persona}"))
+        conn.execute("INSERT INTO menzioni (persona, individuo, certa) "
+                     "VALUES (?,?,1)", (persona, individuo))
+    dato = contesto.per_documento(conn, 8)
+    quante = rilettura._correggi(
+        conn, dato,
+        {"campi": [_campo(802, "nome", "Egidio"), _campo(802, "cognome", "Colaneri")]},
+        "gemini-3.6-flash",
+    )
+    # 'Egidio' e' gia' nell'atto 8: non conta come copiato, e resta solo
+    # 'Colaneri' come sospetta — una sola, quindi non basta a bocciare
+    assert quante >= 1
+
+
+# --- il veto sulla spiegazione che guarda fuori dall'atto -------------
+
+def test_la_spiegazione_che_cita_l_atto_precedente_e_vetata():
+    """Il caso vero: l'atto 12 del 1843, corretto con l'atto 11."""
+    assert rilettura._spiegazione_guarda_altrove(
+        "L'immagine 1 (in cima a sinistra, fine dell'atto precedente) "
+        "mostra chiaramente il nome 'Nicolangela'", "12")
+
+
+def test_la_spiegazione_che_cita_un_altro_numero_d_atto_e_vetata():
+    assert rilettura._spiegazione_guarda_altrove(
+        "visibile chiaramente nell'atto n. 2, che inizia in cima alla "
+        "seconda immagine", "Uno")
+
+
+def test_la_coda_del_proprio_atto_sulla_scansione_dopo_non_e_vetata():
+    """Un atto non finisce con la scansione: leggerlo fino in fondo e' sano."""
+    assert not rilettura._spiegazione_guarda_altrove(
+        "nell'immagine 2 (che contiene la parte finale dell'atto n. 1) "
+        "e' chiaramente scritto 'uno'", "Uno")
+
+
+def test_senza_numero_d_atto_il_veto_sui_numeri_non_scatta():
+    assert not rilettura._spiegazione_guarda_altrove(
+        "l'atto n. 3 mostra un'altra grafia", None)
+    # ma le parole restano: non servono numeri per dire 'altrove'
+    assert rilettura._spiegazione_guarda_altrove(
+        "il nome viene dalla pagina precedente", None)
+
+
+def test_la_spiegazione_normale_non_e_vetata():
+    assert not rilettura._spiegazione_guarda_altrove(
+        "La trascrizione riporta 'Cinguanta' con la 'u' invece della 'n', "
+        "mentre l'immagine mostra chiaramente 'Cinquanta'", "1")
+    assert not rilettura._spiegazione_guarda_altrove("", "1")
+
+
+def test_ripassa_al_veto_disfa_le_correzioni_lette_fuori_dall_atto(conn):
+    """Il veto vale anche all'indietro, su cio' che e' gia' in vigore."""
+    from history_maker.ricostruzione import registro
+
+    conn.execute(
+        "INSERT INTO atti (id, registro, immagine, numero_atto, tipo, anno) "
+        "VALUES (9, 'r', 'p.jpg', '12', 'nascita', 1843)")
+    conn.execute(
+        "INSERT INTO persone (id, atto, ruolo, nome, cognome) "
+        "VALUES (91, 9, 'neonato', 'Maria Celeste', 'Torzi')")
+    registro.annota(
+        conn, "correzione", (91,),
+        "nome: letto «Maria Celeste», sull'immagine «Nicolangela»; L'immagine 1 "
+        "(in cima a sinistra, fine dell'atto precedente) mostra 'Nicolangela'.",
+        confidenza=0.95, decisore="gemini", modello="m",
+        versione_prompt="1.3.0", evidenze=("nome=Nicolangela",))
+    conn.commit()
+
+    verdetti = rilettura.ripassa_al_veto(conn, "1.3.0", applica=True)
+    assert [v["motivo"] for v in verdetti] == ["letta fuori da questo atto"]
+    disfatte = conn.execute(
+        "SELECT COUNT(*) FROM decisioni WHERE disfa IS NOT NULL").fetchone()[0]
+    assert disfatte == 1
+
+
+# --- un'assenza non e' una lettura -----------------------------------
+
+def test_un_assenza_non_e_una_lettura():
+    for parola in ("nulla", "niente", "nessuno", "illeggibile", "in bianco",
+                   "  ", "---", "?", "non presente (e' il neonato)",
+                   "non indicata"):
+        assert not rilettura._e_una_lettura(parola), parola
+
+
+def test_una_parola_vera_e_una_lettura():
+    for parola in ("Nullo", "Nicolangela", "campagnuola", "trentatre",
+                   "Nessi", "Niente Pizzi"):
+        assert rilettura._e_una_lettura(parola), parola
+
+
+def test_ripassa_al_veto_disfa_l_eta_che_dice_di_non_esserci(conn, dato):
+    """L'eta' non ha vocabolario: prima nessun controllo la guardava."""
+    _correzione(conn, 100, "eta", "non presente (e' il neonato)")
+    verdetti = rilettura.ripassa_al_veto(conn, "1.0.0")
+    assert [v["motivo"] for v in verdetti] == ["non e' una lettura, e' un'assenza"]
+
+
+def test_il_ripasso_non_tocca_le_decisioni_di_una_persona(conn, dato):
+    """Una statistica non ribalta chi ha aperto la pagina e guardato."""
+    from history_maker.ricostruzione import registro
+    registro.annota(
+        conn, "correzione", (100,),
+        "professione: la pagina dice «barilaio», letto a piena risoluzione.",
+        confidenza=1.0, decisore="persona", modello="", versione_prompt="",
+        evidenze=("professione=barilaio",))
+    conn.commit()
+    assert rilettura.ripassa_al_veto(conn, "") == []
+
+
+# --- il cognome incollato nel nome, davanti e dietro -------------------
+
+def test_una_particella_attaccata_e_riconosciuta():
+    """Nei registri la particella non e' staccata: «d'Armi» e' un token."""
+    for parola in ("di", "De", "della", "d'Armi", "D'Ettorre", "l'Aquila"):
+        assert rilettura._e_una_particella(parola), parola
+    for parola in ("Lella", "Maria", "Diodato", ""):
+        assert not rilettura._e_una_particella(parola), parola
+
+
+def test_il_cognome_davanti_al_nome_si_sbuccia(conn):
+    """Dal 1866 i registri scrivono prima il casato: «Lella Filippo»."""
+    for i in range(30):
+        conn.execute("INSERT INTO individui (chiave, cognome) VALUES (?,'Lella')",
+                     (f"k{i}",))
+    conn.execute("INSERT INTO individui (chiave, nome) VALUES ('n','Filippo')")
+    conn.commit()
+    assert rilettura._senza_un_cognome_del_paese(conn, "Lella Filippo") == "Filippo"
+
+
+def test_non_si_sbuccia_lasciando_solo_un_casato(conn):
+    """«Franchetta d'Armi» sbucciato davanti lasciava «d'Armi»."""
+    for i in range(30):
+        conn.execute("INSERT INTO individui (chiave, cognome) VALUES (?,'Franchetta')",
+                     (f"k{i}",))
+    conn.commit()
+    assert (rilettura._senza_un_cognome_del_paese(conn, "Franchetta d'Armi")
+            == "Franchetta d'Armi")
+
+
+def test_un_nome_che_e_anche_cognome_non_si_sbuccia(conn):
+    """'Salvatore' a Torrebruna e' tutt'e due: 261 casati, 112 battesimi.
+
+    Il limite onesto della regola: dove l'archivio non e' schiacciante
+    non decide, e la correzione va guardata da una persona.
+    """
+    for i in range(20):
+        conn.execute("INSERT INTO individui (chiave, cognome) VALUES (?,'Salvatore')",
+                     (f"k{i}",))
+    for i in range(10):
+        conn.execute("INSERT INTO individui (chiave, nome) VALUES (?,'Salvatore')",
+                     (f"n{i}",))
+    conn.commit()
+    assert (rilettura._senza_un_cognome_del_paese(conn, "Salvatore Maria")
+            == "Salvatore Maria")

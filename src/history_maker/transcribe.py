@@ -131,6 +131,7 @@ def pagine_da_trascrivere(
     solo_mancanti: bool = True,
     dal: int | None = None,
     al: int | None = None,
+    registro: str | None = None,
 ) -> list[Pagina]:
     """Le pagine scaricate che rientrano nella raccolta, in ordine di anno.
 
@@ -144,11 +145,30 @@ def pagine_da_trascrivere(
     famiglie intere, con meta' 1840 e meta' 1850 non si chiude nulla.
 
     E' lo stesso ordine che usa gia' la fase di scaricamento.
+
+    ``registro`` restringe a un fondo solo, per pezzo di slug. Serve
+    quando un registro va rifatto e gli altri no: l'anno e' un filtro
+    troppo largo — ``--anno 1837`` sono cento pagine e trentaquattro
+    chiamate, mentre il registro che ha il buco ne vuole quattro. E'
+    successo davvero, con le ultime diciotto chiamate di una giornata
+    che non bastavano a raggiungere il fondo giusto.
     """
     catalogo = Catalogo.carica(config.catalogo)
     registri = sorted(
         selezione(catalogo, config), key=lambda r: (r.anno or 0, r.tipologia or "")
     )
+    if registro:
+        # Lo spazio bianco in coda si toglie: un nome letto da un file di
+        # elenco si porta dietro il ritorno a capo di Windows, e un filtro
+        # che non combacia fa trascrivere ZERO pagine uscendo con successo.
+        cercato = registro.strip().casefold()
+        registri = [r for r in registri if cercato in (r.slug or "").casefold()]
+        if not registri:
+            raise ValueError(
+                f"nessun registro contiene «{registro.strip()}». Un filtro che "
+                f"non combacia e' quasi sempre un errore di battitura, e "
+                f"tacere qui vuol dire far credere che il lavoro sia fatto."
+            )
     pagine: list[Pagina] = []
     for registro in registri:
         # Intersezione, non confronto secco: un registro 1813-1814

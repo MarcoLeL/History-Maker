@@ -207,6 +207,24 @@ centro. Sono una pagina sola. Restituisci UN SOLO oggetto per scansione,
 che raccolga gli atti di entrambe le meta' nell'ordine in cui si leggono,
 e metti in "file" il nome della scansione, non quello della meta'. Un
 atto che comincia su una meta' e finisce sull'altra e' un atto solo.
+
+UNA SCANSIONE PUO' COMINCIARE CON LA CODA DELL'ATTO DI PRIMA
+Ogni atto porta in testa il suo "Num. d'ordine". Se la meta' sinistra
+non ne ha uno — comincia a meta' frase, o direttamente con l'elenco dei
+testimoni e le firme — allora quella non e' l'inizio di un atto: e' la
+fine dell'atto precedente, che stava sulla scansione prima di questa.
+
+In quel caso "atti" ha DUE elementi, non uno:
+  1. la coda, per prima: i suoi testimoni, le sue firme, i suoi sposi se
+     li nomina. Mettile "numero_atto" del suo atto — quello di destra
+     meno uno, o quello che leggi sulla pagina — e lascia null tutto
+     cio' che quella meta' non dice.
+  2. l'atto che comincia sulla meta' destra, col suo numero.
+NON metterli in un elemento solo, e NON attribuire all'atto di destra i
+testimoni e le firme che stanno a sinistra: sono di un altro atto, e
+finirebbero addosso a persone sbagliate. Se la meta' sinistra e' la
+coda, un atto con dodici persone diventa due atti da sei, ed e' giusto
+cosi'.
 """
 
 

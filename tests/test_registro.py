@@ -195,3 +195,91 @@ def test_archiviare_due_volte_non_duplica_niente(conn):
     registro.archivia(conn, tieni_ultime=1)
     dopo = conn.execute("SELECT COUNT(*) FROM decisioni_archivio").fetchone()[0]
     assert dopo == prima
+
+
+# --- imposizioni() -----------------------------------------------------
+
+def test_una_separazione_resta_un_gruppo_solo(conn):
+    """Tre menzioni staccate dalla stessa decisione fanno un pezzo solo.
+
+    E' cio' che distingue «questi tre vanno via insieme» da «questi tre
+    vanno via ciascuno per conto suo»: la prima e' la decisione che
+    qualcuno ha preso davvero, e appiattirla in coppie la perde.
+    """
+    base = datetime(2026, 1, 1)
+    _inserisci(conn, _quando(base, 0), "separazione", [10, 11, 12, 13],
+               decisore="persona")
+    assert registro.imposizioni(conn)["separare"] == [(10, (11, 12, 13))]
+
+
+def test_due_separazioni_sulla_stessa_scheda_restano_due(conn):
+    """Due decisioni diverse sono due tagli, anche con lo stesso ancoraggio.
+
+    Il caso vero: dalla scheda di Rebecca Lella andava staccato l'atto di
+    morte del 1857 — che e' di sua sorella Maria — e, con un'altra
+    decisione, una menzione incerta che e' di Angela Maria Lella. Messe
+    nello stesso pezzo, la prima unione se le portava via tutt'e due, e
+    Angela Maria finiva addosso a Maria.
+    """
+    base = datetime(2026, 1, 1)
+    _inserisci(conn, _quando(base, 0), "separazione", [10, 11], decisore="persona")
+    _inserisci(conn, _quando(base, 1), "separazione", [10, 12], decisore="claude")
+    assert registro.imposizioni(conn)["separare"] == [(10, (11,)), (10, (12,))]
+
+
+def test_le_separazioni_superate_non_si_riapplicano(conn):
+    base = datetime(2026, 1, 1)
+    vecchia = _inserisci(conn, _quando(base, 0), "separazione", [10, 11],
+                         decisore="persona")
+    _inserisci(conn, _quando(base, 1), "separazione", [10], decisore="claude",
+               disfa=vecchia)
+    assert registro.imposizioni(conn)["separare"] == []
+
+
+# ---------------------------------------------------------------------------
+# Il registro non si riempie di copie
+# ---------------------------------------------------------------------------
+
+def _decisione(motivo="le due schede si somigliano", decisore="algoritmo", entita=(7, 9)):
+    return modello.Decisione(
+        azione="separazione", entita=tuple(entita), motivo=motivo,
+        confidenza=0.9, decisore=decisore, quando="2026-01-01T00:00:00Z",
+    )
+
+
+def test_la_stessa_decisione_dell_algoritmo_non_si_riscrive(conn):
+    """Il giro dopo rifa' lo stesso ragionamento: non e' una decisione nuova.
+
+    La tabella delle decisioni non si azzera, mentre tutte le altre si
+    rifanno: cosi' ogni giro riscriveva le stesse separazioni. Una sola
+    ci era finita dentro duecento volte, e su quattrocentotrentasettemila
+    righe quattrocentoventicinquemila erano ripetizioni.
+    """
+    for _ in range(3):
+        registro.salva(conn, [_decisione()])
+    assert conn.execute("SELECT count(*) FROM decisioni").fetchone()[0] == 1
+
+
+def test_un_motivo_diverso_e_una_decisione_diversa(conn):
+    """Se l'algoritmo ci arriva per un'altra strada, il registro lo dice."""
+    registro.salva(conn, [_decisione(motivo="le due schede si somigliano")])
+    registro.salva(conn, [_decisione(motivo="il coniuge e' un altro")])
+    assert conn.execute("SELECT count(*) FROM decisioni").fetchone()[0] == 2
+
+
+def test_altre_entita_sono_una_decisione_diversa(conn):
+    registro.salva(conn, [_decisione(entita=(7, 9))])
+    registro.salva(conn, [_decisione(entita=(7, 11))])
+    assert conn.execute("SELECT count(*) FROM decisioni").fetchone()[0] == 2
+
+
+@pytest.mark.parametrize("decisore", ["persona", "claude-immagine", "claude"])
+def test_chi_ha_guardato_la_pagina_puo_ripetersi(conn, decisore):
+    """Il contrappeso: le decisioni di una persona non si perdono mai.
+
+    Sono poche e sono la cosa piu' preziosa dell'archivio; se qualcuno
+    decide due volte la stessa cosa, il registro deve dirlo.
+    """
+    for _ in range(2):
+        registro.salva(conn, [_decisione(decisore=decisore)])
+    assert conn.execute("SELECT count(*) FROM decisioni").fetchone()[0] == 2

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le correzioni da guardare</title>
+<!-- Non si carica 'stile.css': e' il foglio dell'albero, che vive a tutto
+     schermo con 'body { height: 100vh; overflow: hidden }' e un 'main'
+     flex. Su una pagina che e' un elenco lungo quello impedisce di
+     scorrere e schiaccia le schede. Qui gli stili sono tutti sotto. -->
+<style>
+  :root { --grano: #f6f3ec; --inchiostro: #221d17; --tenue: #6d6357;
+          --riga: #ded5c6; --buono: #2c6e4a; --dubbio: #9a5b12; }
+  html, body { height: auto; overflow: visible; }
+  body { margin: 0; background: var(--grano); color: var(--inchiostro);
+         font: 15px/1.55 Georgia, "Times New Roman", serif; }
+  main { display: block; }
+  header { padding: 22px 28px 14px; border-bottom: 1px solid var(--riga); }
+  h1 { margin: 0 0 6px; font-size: 22px; font-weight: normal; letter-spacing: .01em; }
+  .conti { color: var(--tenue); font-size: 14px; }
+  .conti b { color: var(--inchiostro); font-weight: normal; }
+  nav { padding: 12px 28px; border-bottom: 1px solid var(--riga);
+        display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; font-size: 13px; padding: 5px 12px; cursor: pointer;
+           background: #fff; color: var(--inchiostro);
+           border: 1px solid var(--riga); border-radius: 3px; }
+  button[aria-pressed="true"] { background: var(--inchiostro); color: var(--grano);
+                                border-color: var(--inchiostro); }
+  main { padding: 8px 28px 60px; }
+  article { border-bottom: 1px solid var(--riga); padding: 18px 0; }
+  .capo { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+  .cambio { font-size: 17px; }
+  .vecchio { text-decoration: line-through; color: var(--tenue); }
+  .freccia { color: var(--tenue); margin: 0 6px; }
+  .nuovo { font-weight: bold; }
+  .campo { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+           color: var(--tenue); }
+  .etichetta { font-size: 12px; padding: 2px 8px; border-radius: 10px;
+               border: 1px solid var(--riga); color: var(--tenue); background: #fff; }
+  .etichetta.refuso { color: var(--buono); border-color: var(--buono); }
+  .etichetta.occhi { color: var(--dubbio); border-color: var(--dubbio); }
+  .etichetta.caduta { color: #fff; background: #9a2020; border-color: #9a2020; }
+  .etichetta.vista { color: var(--buono); border-color: var(--buono);
+                     background: #eef5f0; }
+  article.vista { opacity: .62; }
+  .dove { color: var(--tenue); font-size: 13px; margin-top: 6px; }
+  .frase { margin-top: 8px; padding: 8px 12px; background: #fffdf8;
+           border-left: 3px solid var(--riga); font-size: 14px; }
+  .motivo { margin-top: 8px; color: var(--tenue); font-size: 13px; font-style: italic; }
+  .apri { margin-top: 10px; display: flex; gap: 10px; align-items: center;
+          flex-wrap: wrap; }
+  /* Un collegamento vestito da bottone: apre l'albero in una scheda nuova,
+     cosi' chi sta scorrendo cento correzioni non perde il segno. */
+  a.bottone { font-size: 13px; padding: 5px 12px; background: #fff;
+              color: var(--inchiostro); border: 1px solid var(--riga);
+              border-radius: 3px; text-decoration: none; }
+  a.bottone:hover { border-color: var(--inchiostro); }
+  .senza-scheda { font-size: 12px; color: var(--tenue); font-style: italic; }
+  figure { margin: 12px 0 0; }
+  figure img { max-width: 100%; border: 1px solid var(--riga); background: #fff; }
+  figcaption { font-size: 12px; color: var(--tenue); margin-top: 4px; }
+  .vuoto { color: var(--tenue); padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Le correzioni da guardare</h1>
+  <div class="conti" id="conti">caricamento…</div>
+</header>
+
+<nav>
+  <button data-filtro="tutte" aria-pressed="true">tutte</button>
+  <button data-filtro="occhi" aria-pressed="false">da guardare</button>
+  <button data-filtro="refuso" aria-pressed="false">refusi</button>
+  <button data-filtro="vuoto" aria-pressed="false">riempimenti</button>
+  <button data-filtro="caduta" aria-pressed="false">premessa caduta</button>
+  <button data-filtro="vista" aria-pressed="false">gia' guardate</button>
+  <button data-filtro="persona" aria-pressed="false">decise da me</button>
+  <span class="conti" id="mostrate"></span>
+</nav>
+
+<main id="elenco"><p class="vuoto">caricamento…</p></main>
+
+<script>
+let TUTTE = [], FILTRO = "tutte";
+
+function specie(c) {
+  if (c.riempie_un_vuoto) return "vuoto";
+  if (c.da_refuso) return "refuso";
+  return "occhi";
+}
+
+function passa(c) {
+  if (FILTRO === "tutte") return true;
+  if (FILTRO === "occhi") return specie(c) === "occhi" && !c.confermata;
+  if (FILTRO === "persona") return c.decisore === "persona";
+  if (FILTRO === "caduta") return c.premessa_regge === false;
+  if (FILTRO === "vista") return c.confermata === true;
+  return specie(c) === FILTRO;
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g,
+    m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m]));
+}
+
+function scheda(c) {
+  const art = document.createElement("article");
+  if (c.confermata) art.classList.add("vista");
+  const tipo = specie(c);
+  const etichetta = tipo === "refuso"
+    ? '<span class="etichetta refuso">refuso — si giudica dalla stringa</span>'
+    : tipo === "vuoto"
+      ? '<span class="etichetta">riempie un campo vuoto</span>'
+      : '<span class="etichetta occhi">da guardare</span>';
+  const chi = c.decisore === "persona"
+    ? "decisa da una persona"
+    : `${esc(c.decisore)}${c.modello ? " · " + esc(c.modello) : ""}`;
+
+  art.innerHTML = `
+    <div class="capo">
+      <span class="campo">${esc(c.campo)}</span>
+      <span class="cambio">
+        ${c.vecchio ? `<span class="vecchio">${esc(c.vecchio)}</span><span class="freccia">→</span>` : ""}
+        <span class="nuovo">${esc(c.nuovo)}</span>
+      </span>
+      ${etichetta}
+      ${c.somiglianza ? `<span class="etichetta">somiglianza ${c.somiglianza}</span>` : ""}
+      ${c.confermata
+        ? '<span class="etichetta vista">gia' guardata, e giusta</span>'
+        : ""}
+      ${c.premessa_regge === false
+        ? '<span class="etichetta caduta">la premessa non regge: diceva di aver letto un'altra cosa</span>'
+        : ""}
+    </div>
+    <div class="dove">
+      ${esc(c.anno)} · ${esc(c.tipo)} n. ${esc(c.numero)} · ${esc(c.ruolo)}
+      «${esc(c.chi)}» · ${chi}${c.confidenza != null ? " · confidenza " + c.confidenza : ""}
+      ${c.scheda ? ` · scheda <b>${esc(c.scheda_nome)}</b> (${c.scheda_menzioni} menzioni)` : ""}
+    </div>
+    ${c.frase ? `<div class="frase">${esc(c.frase)}</div>` : ""}
+    ${c.motivo ? `<div class="motivo">${esc(c.motivo)}</div>` : ""}
+    <div class="apri">
+      <button type="button" class="registro">apri la pagina del registro</button>
+      ${c.scheda
+        ? `<a class="bottone" href="/#${c.scheda}" target="_blank" rel="noopener"
+             >vedi «${esc(c.scheda_nome)}» nell'albero</a>`
+        : `<span class="senza-scheda">questa menzione non e' in nessuna scheda</span>`}
+    </div>`;
+
+  const bottone = art.querySelector(".registro");
+  bottone.addEventListener("click", () => {
+    if (art.querySelector("figure")) {
+      art.querySelector("figure").remove();
+      bottone.textContent = "apri la pagina del registro";
+      return;
+    }
+    const fig = document.createElement("figure");
+    fig.innerHTML = `<img loading="lazy" src="/immagine/${encodeURI(c.immagine)}" alt="">
+      <figcaption>${esc(c.immagine)}</figcaption>`;
+    art.appendChild(fig);
+    bottone.textContent = "chiudi la pagina";
+  });
+  return art;
+}
+
+function disegna() {
+  const elenco = document.getElementById("elenco");
+  elenco.textContent = "";
+  const scelte = TUTTE.filter(passa);
+  document.getElementById("mostrate").textContent =
+    `${scelte.length} mostrate`;
+  if (!scelte.length) {
+    elenco.innerHTML = '<p class="vuoto">Nessuna correzione con questo filtro.</p>';
+    return;
+  }
+  const pezzo = document.createDocumentFragment();
+  scelte.forEach(c => pezzo.appendChild(scheda(c)));
+  elenco.appendChild(pezzo);
+}
+
+document.querySelectorAll("nav button").forEach(b => {
+  b.addEventListener("click", () => {
+    FILTRO = b.dataset.filtro;
+    document.querySelectorAll("nav button").forEach(
+      x => x.setAttribute("aria-pressed", String(x === b)));
+    disegna();
+  });
+});
+
+fetch("/api/correzioni").then(r => r.json()).then(d => {
+  TUTTE = d.correzioni || [];
+  const r = d.riassunto || {};
+  document.getElementById("conti").innerHTML =
+    `<b>${r.totale || 0}</b> in vigore · <b>${r.da_guardare || 0}</b> da guardare · ` +
+    `${r.refusi || 0} refusi · ${r.riempimenti || 0} riempimenti · ` +
+    `${r.di_persona || 0} decise da una persona` +
+    (r.confermate ? ` · ${r.confermate} gia' guardate` : "") +
+    (r.premessa_caduta ? ` · <b>${r.premessa_caduta}</b> con la premessa caduta` : "");
+  disegna();
+}).catch(() => {
+  document.getElementById("elenco").innerHTML =
+    '<p class="vuoto">Non sono riuscito a leggere le correzioni.</p>';
+});
+</script>
+</body>
+</html>

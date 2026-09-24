@@ -71,7 +71,271 @@ def tutte(esito: risoluzione.Esito) -> list[mod.Anomalia]:
     trovate.extend(coniugi_contemporanei(esito))
     trovate.extend(letture_decisive_incerte(esito))
     trovate.extend(vite_troppo_lunghe(esito))
+    trovate.extend(nomi_del_sesso_sbagliato(esito))
+    trovate.extend(figli_prima_del_matrimonio(esito))
+    trovate.extend(fratelli_omonimi(esito))
+    trovate.extend(padre_di_un_altro_casato(esito))
     return trovate
+
+
+# Quanti figli servono perche' il cognome che non torna sia un problema
+# del padre e non del figlio. Due: con un figlio solo la lettura sbagliata
+# puo' stare da una parte qualsiasi, e ``cognomi_sospetti`` la guarda gia'
+# dal lato del figlio. Con due figli che concordano fra loro e discordano
+# dal padre, la parte sbagliata e' il padre.
+FIGLI_CHE_FANNO_TESTO = 2
+
+
+def padre_di_un_altro_casato(esito: risoluzione.Esito) -> list[mod.Anomalia]:
+    """Un genitore il cui cognome non e' quello di nessuno dei suoi figli.
+
+    Un padre e i suoi figli legittimi portano lo stesso cognome. Se non
+    lo portano, e i figli sono piu' d'uno e fra loro concordano, allora
+    la scheda del padre non e' di un uomo solo: e' il posto dove due
+    uomini con lo stesso nome di battesimo si sono sovrapposti, e i figli
+    dell'uno sono finiti appesi all'altro. E' il caso peggiore da
+    lasciare in piedi, perche' non fa perdere una persona ma **sposta un
+    ramo intero** sotto la famiglia sbagliata.
+
+    Il caso che l'ha voluta: Fileno De Lucia risultava figlio di «Luigi
+    di Fazio». Li' l'uomo era uno solo — 'di Fazio' e 'De Lucia' sono la
+    stessa mano letta in due modi, e a scegliere il cognome sbagliato era
+    stata la scheda, non il grafo; a raddrizzarlo basta
+    ``esecuzione.cognome_di_famiglia``. Ma proprio per questo il
+    controllo si fa **dopo** quella scelta: quando neppure una delle
+    letture del padre torna nei figli, non c'e' piu' una lettura da
+    preferire, e quello che resta e' un dubbio sull'identita'.
+
+    Non guarda il cognome della madre: nei registri porta quello da
+    nubile, che con quello dei figli non c'entra per costruzione.
+
+    Oggi non trova niente, ed e' il risultato giusto: la fase 4 da' al
+    figlio il cognome del padre quando l'atto lo scrive, quindi dentro
+    l'atto i due lo condividono sempre, e perche' questo controllo parli
+    bisogna che una fusione abbia messo insieme due uomini che l'archivio
+    non ha mai visto insieme. E' una rete, non una diagnosi: sta qui per
+    il giorno in cui una regola nuova la strappera'.
+    """
+    trovate: list[mod.Anomalia] = []
+    for chiave in sorted(esito.schede):
+        scheda = esito.schede[chiave]
+        if scheda.sesso != "M" or not scheda.chiavi_cognome:
+            continue
+        figli = [
+            esito.schede[f] for f in sorted(scheda.figli)
+            if f in esito.schede and esito.schede[f].chiavi_cognome
+        ]
+        if len(figli) < FIGLI_CHE_FANNO_TESTO:
+            continue
+        if any(scheda.chiavi_cognome & figlio.chiavi_cognome for figlio in figli):
+            continue
+        loro = set.intersection(*(figlio.chiavi_cognome for figlio in figli))
+        if not loro:
+            continue        # i figli non concordano neanche fra loro
+        trovate.append(mod.Anomalia(
+            tipo="SURNAME_ANOMALY",
+            individui=(chiave, *(f.chiave for f in figli[:3])),
+            campo="cognome",
+            descrizione=(
+                f"{scheda.etichetta()} e' dato per padre di {len(figli)} figli "
+                f"che si chiamano tutti '{sorted(loro)[0]}', e nessuna delle sue "
+                f"letture ({', '.join(sorted(scheda.chiavi_cognome))}) e' quella"
+            ),
+            atti=tuple(sorted(scheda.atti))[:4],
+            spiegazioni=(
+                "questa scheda tiene insieme due uomini con lo stesso nome",
+                "il cognome del padre e' una lettura rovinata di quello dei figli",
+                "sono figli naturali riconosciuti solo dalla madre",
+            ),
+            confidenza=0.7,
+            impatto=scheda.quante + sum(f.quante for f in figli),
+            gravita="alta",
+        ))
+    return trovate
+
+
+def fratelli_omonimi(esito: risoluzione.Esito) -> list[mod.Anomalia]:
+    """Due figli della stessa coppia con lo stesso nome, e nessuna morte in mezzo.
+
+    Riusare il nome di un figlio morto e' l'uso del paese, e l'archivio
+    ne e' pieno: Secondina Moretta nasce nel 1822, muore a quattro anni
+    nel 1826, e nel 1828 nasce la seconda Secondina. In quei casi c'e' un
+    atto di morte fra le due nascite, e le due bambine sono due — il veto
+    sui due atti di nascita ha ragione a tenerle separate.
+
+    Quando l'atto di morte **non c'e'**, la lettura ovvia si rovescia:
+    nessuno chiama Luigi due figli vivi. O il primo e' morto e il
+    registro l'ha perso, o una delle due nascite non e' sua — e in tutti
+    e due i casi il veto sta separando un uomo dal suo atto di nascita.
+
+    Il caso: Luigi Moretta, nato nel 1819, e «Luigi Nicola Maria»
+    Moretta, nato nel 1821, tutti e due da Carmine Moretta e Maria Lella.
+    Le due schede hanno **la stessa vita adulta** — le eta' dichiarate
+    dal 1852 al 1879 danno tutte il 1819-1820 — e un solo atto di morte,
+    quello del 1880.
+    """
+    per_coppia: dict[tuple, list] = defaultdict(list)
+    for chiave, scheda in esito.schede.items():
+        if not scheda.nascite_certe or not scheda.padri or not scheda.madri:
+            continue
+        for padre in scheda.padri:
+            for madre in scheda.madri:
+                per_coppia[(padre, madre)].append(chiave)
+
+    trovate: list[mod.Anomalia] = []
+    for (padre, madre), figli in sorted(per_coppia.items()):
+        if len(figli) < 2:
+            continue
+        for indice, uno in enumerate(sorted(figli)):
+            primo = esito.schede[uno]
+            for altro in sorted(figli)[indice + 1:]:
+                secondo = esito.schede[altro]
+                if not evidenza._due_schede_con_lo_stesso_nome(primo, secondo):
+                    continue
+                prima, dopo = sorted((
+                    (min(primo.nascite_certe), primo),
+                    (min(secondo.nascite_certe), secondo),
+                ), key=lambda x: x[0])
+                if prima[1].morte is not None and prima[1].morte <= dopo[0]:
+                    continue        # il nome e' stato riusato: sono due
+                trovate.append(mod.Anomalia(
+                    tipo="DUPLICATE_PERSON",
+                    individui=(uno, altro),
+                    descrizione=(
+                        f"{primo.etichetta()} e {secondo.etichetta()} sono figli "
+                        f"della stessa coppia e portano lo stesso nome, ma fra le "
+                        f"due nascite non c'e' nessun atto di morte: nessuno "
+                        f"chiama cosi' due figli vivi"
+                    ),
+                    spiegazioni=(
+                        "il primo e' morto e il registro l'ha perso",
+                        "una delle due nascite non e' sua",
+                    ),
+                    confidenza=0.6,
+                    impatto=primo.quante + secondo.quante,
+                    gravita="alta",
+                ))
+    return trovate
+
+
+# Quanti anni si concede a un figlio di precedere il matrimonio dei
+# genitori. Uno: i figli nati prima delle nozze esistono e vengono
+# legittimati dall'atto stesso, ma nascono nei mesi che le precedono,
+# non dieci anni prima.
+ANNI_PRIMA_DEL_MATRIMONIO = 2
+
+
+def figli_prima_del_matrimonio(esito: risoluzione.Esito) -> list[mod.Anomalia]:
+    """Un figlio che nasce anni prima che i suoi genitori si sposino.
+
+    Quasi sempre non e' un figlio prematrimoniale: e' **un'eta' letta
+    male**, e l'atto di matrimonio dei genitori e' la prova piu' solida
+    che l'archivio possieda per smentirla — porta una data scritta, non
+    un'eta' ricordata a voce.
+
+    Il caso che l'ha voluta: Luigi Moretta, morto nel 1880, trascritto
+    «di anni settantuno». Da li' risultava nato nel 1809, mentre suo
+    padre Carmine Moretta e sua madre Maria Lella si sposano nel
+    **febbraio 1813**. Sulla pagina c'e' scritto «sessantuno»: e' il
+    Luigi nato nel 1819, e senza questa lettura restava un terzo fratello
+    omonimo che non e' mai esistito.
+    """
+    nozze: dict = {}
+    for chiave, scheda in esito.schede.items():
+        for menzione in scheda.menzioni:
+            if menzione.tipo_atto != "matrimonio" or menzione.ruolo not in (
+                "sposo", "sposa"
+            ):
+                continue
+            if menzione.anno:
+                nozze[chiave] = min(nozze.get(chiave, menzione.anno), menzione.anno)
+
+    trovate: list[mod.Anomalia] = []
+    for chiave, scheda in sorted(esito.schede.items()):
+        anno = scheda.anno_nascita
+        if anno is None:
+            continue
+        for genitore in sorted(scheda.padri | scheda.madri):
+            matrimonio = nozze.get(genitore)
+            if matrimonio is None or anno >= matrimonio - ANNI_PRIMA_DEL_MATRIMONIO:
+                continue
+            suo = esito.schede.get(genitore)
+            trovate.append(mod.Anomalia(
+                tipo="AGE_ANOMALY",
+                individui=(chiave, genitore),
+                campo="eta",
+                descrizione=(
+                    f"{scheda.etichetta()} risulta nato nel {anno}, ma "
+                    f"{suo.etichetta() if suo else genitore} si sposa nel "
+                    f"{matrimonio}: l'eta' dichiarata non regge contro una data "
+                    f"scritta"
+                ),
+                spiegazioni=(
+                    "l'eta' e' letta male sull'atto",
+                    "e' un figlio di un matrimonio precedente",
+                ),
+                confidenza=0.7, impatto=scheda.quante, gravita="media",
+            ))
+    return trovate
+
+
+def nomi_del_sesso_sbagliato(esito: risoluzione.Esito) -> list[mod.Anomalia]:
+    """Un padre con un nome da donna, o una madre con un nome da uomo.
+
+    Il ruolo dice il sesso senza margine — un padre e' un uomo — quindi
+    quando il nome letto e' inequivocabilmente dell'altro sesso a
+    sbagliare e' la **lettura**, e sbaglia in un punto che si vede: il
+    nome. E' la classe di errore piu' facile da mandare all'immagine,
+    perche' la domanda e' chiusa.
+
+    Nell'albero di Filippo Lella ce n'era una: nell'atto 5000 del 1874 il
+    padre del neonato Nicola Maria **Di Nardo** era trascritto
+    «Domenicantonia D'Illice» — femminile, e con un cognome che in tutto
+    l'archivio compare due volte. Era Domenicantonio Di Nardo,
+    quarantatre anni, marito di Maria Domenica Pelliccia.
+    """
+    genere = getattr(esito.corpus, "genere", None)
+    if genere is None:
+        return []
+    trovate: list[mod.Anomalia] = []
+    for chiave in sorted(esito.schede):
+        scheda = esito.schede[chiave]
+        for menzione in scheda.menzioni:
+            atteso = _sesso_dal_ruolo(menzione.ruolo)
+            if atteso is None or not menzione.nome:
+                continue
+            dal_nome = genere.di(menzione.nome)
+            if dal_nome is None or dal_nome == atteso:
+                continue
+            trovate.append(mod.Anomalia(
+                tipo="NAME_ANOMALY",
+                individui=(chiave,),
+                campo="nome",
+                descrizione=(
+                    f"nell'atto {menzione.atto} e' {menzione.ruolo} — quindi "
+                    f"{'un uomo' if atteso == 'M' else 'una donna'} — ma porta "
+                    f"il nome «{menzione.nome}», che in paese e' "
+                    f"{'maschile' if dal_nome == 'M' else 'femminile'}"
+                ),
+                atti=(menzione.atto,),
+                spiegazioni=(
+                    "il nome e' letto male sull'atto",
+                    "il ruolo e' letto male sull'atto",
+                ),
+                confidenza=0.7, impatto=scheda.quante, gravita="media",
+            ))
+    return trovate
+
+
+def _sesso_dal_ruolo(ruolo: str | None) -> str | None:
+    from history_maker import nomi as _nomi
+
+    chiave = (ruolo or "").strip().casefold()
+    if chiave in _nomi.RUOLI_MASCHILI:
+        return "M"
+    if chiave in _nomi.RUOLI_FEMMINILI:
+        return "F"
+    return None
 
 
 # Quanti anni puo' durare la comparsa di una persona nei registri. Non e'

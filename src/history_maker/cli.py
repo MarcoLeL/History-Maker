@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -63,6 +64,10 @@ def _parser() -> argparse.ArgumentParser:
                    help="modello del backend scelto, es. gemini-3.6-flash o claude-opus-5")
     p.add_argument("--senza-testo-integrale", action="store_true",
                    help="non chiedere la trascrizione diplomatica: un terzo di token in meno")
+    p.add_argument("--registro", default=None,
+                   help="solo i registri il cui nome contiene questo pezzo, "
+                        "es. '1837-morti-17810411'. L'anno e' un filtro "
+                        "troppo largo quando il buco sta in un fondo solo")
     p.add_argument("--limite", type=int, default=None, help="trascrive solo le prime N pagine")
     p.add_argument("--stima", action="store_true", help="mostra chiamate, contesto e tempo, poi si ferma")
     p.add_argument("--rifai", action="store_true", help="ritrascrive anche le pagine gia' fatte")
@@ -106,6 +111,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--senza-cache", action="store_true",
                    help="rifa' i vicinati invece di riusarli (piu' lento)")
 
+    sotto.add_parser(
+        "deduci",
+        help="i genitori che nessun atto scrive, dedotti dal nome dei nipoti",
+    )
+
     p = sotto.add_parser(
         "dubbi",
         help="la coda dei casi da guardare, in ordine di priorita'",
@@ -132,9 +142,13 @@ def _parser() -> argparse.ArgumentParser:
         help="fase 6f: rilegge la pagina intera con il contesto genealogico accanto",
     )
     p.add_argument("--quante", type=int, default=20,
-                   help="quante pagine rileggere al massimo")
+                   help="quante FACCIATE rileggere al massimo, cioe' quante "
+                        "chiamate: su una facciata stanno da uno a nove atti, "
+                        "e si chiedono tutti insieme perche' l'immagine e' "
+                        "una sola")
     p.add_argument("--atto", type=int, default=None,
-                   help="una pagina precisa, invece di quelle in coda")
+                   help="un atto preciso, invece di quelli in coda (da solo: "
+                        "non si porta dietro gli altri della sua facciata)")
     p.add_argument("--tutte", action="store_true",
                    help="rilegge ogni pagina non ancora fatta, in ordine "
                         "cronologico, non solo quelle con un'anomalia "
@@ -343,7 +357,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         pagine = transcribe.pagine_da_trascrivere(
-            config, solo_mancanti=not args.rifai, dal=dal, al=al
+            config, solo_mancanti=not args.rifai, dal=dal, al=al,
+            registro=args.registro,
         )
         if args.limite:
             pagine = pagine[: args.limite]
@@ -566,31 +581,38 @@ def main(argv: list[str] | None = None) -> int:
         conn = sqlite3.connect(percorso)
         conn.row_factory = sqlite3.Row
         if args.atto:
-            atti = [args.atto]
+            gruppi = rilettura.facciate(conn, [args.atto], completa=False)
         elif args.tutte:
-            atti = rilettura.tutti_gli_atti(conn, args.quante, da_anno=args.da_anno)
+            gruppi = rilettura.da_rileggere(
+                conn, args.quante, tutte=True, da_anno=args.da_anno)
         else:
-            atti = rilettura.casi(conn, args.quante)
-        dossier = rilettura.prepara(conn, atti, config.immagini)
+            gruppi = rilettura.da_rileggere(conn, args.quante)
+        dossier = rilettura.prepara(conn, gruppi, config.immagini)
 
         if args.elenca or not dossier:
-            for dato in dossier:
+            for facciata in dossier:
                 if args.contesto:
                     print(json.dumps(
-                        {k: v for k, v in dato.items() if not k.startswith("_")},
+                        {k: v for k, v in facciata.items() if not k.startswith("_")},
                         ensure_ascii=False, indent=1,
                     ))
                     continue
-                atto = dato["atto"]
-                print(f"atto {atto['id']}: {atto['tipo']} n. {atto['numero']} "
-                      f"del {atto['anno']} — {atto['immagine']}")
-                for domanda in dato["domande_aperte"]:
-                    print(f"    ? {domanda}")
-                for errore in dato["possible_errors"][:3]:
-                    print(f"    · {errore['codice']} ({errore['confidenza']:.2f}) "
-                          f"{errore['descrizione'][:90]}")
-            print(f"\n{len(dossier)} pagine da rileggere. "
-                  f"Senza --elenca consumano quota.")
+                quanti = len(facciata["atti"])
+                print(f"{facciata['immagine']} — {quanti} "
+                      f"{'atto' if quanti == 1 else 'atti'}, una chiamata")
+                for dato in facciata["atti"]:
+                    atto = dato["atto"]
+                    print(f"    atto {atto['id']}: {atto['tipo']} "
+                          f"n. {atto['numero']} del {atto['anno']}")
+                    for domanda in dato["domande_aperte"]:
+                        print(f"        ? {domanda}")
+                    for errore in dato["possible_errors"][:3]:
+                        print(f"        · {errore['codice']} "
+                              f"({errore['confidenza']:.2f}) "
+                              f"{errore['descrizione'][:80]}")
+            atti_totali = sum(len(f["atti"]) for f in dossier)
+            print(f"\n{len(dossier)} facciate — cioe' {len(dossier)} chiamate — "
+                  f"per {atti_totali} atti. Senza --elenca consumano quota.")
             conn.close()
             return 0
 
@@ -598,7 +620,8 @@ def main(argv: list[str] | None = None) -> int:
         conn.commit()
         conn.close()
         print(
-            f"Pagine rilette: {esiti['fatte']}, riusate dalla cache: "
+            f"Facciate rilette: {esiti['fatte']} (cioe' {esiti['fatte']} chiamate) "
+            f"per {esiti['atti']} atti; riusate dalla cache: "
             f"{esiti['riusate']}, fallite: {esiti['fallite']}.\n"
             f"Correzioni registrate: {esiti['correzioni']}, "
             f"conflitti col contesto: {esiti['conflitti_col_contesto']}."
@@ -703,6 +726,22 @@ def main(argv: list[str] | None = None) -> int:
             "che le ha prese. Per vederle applicate all'albero rilancia\n"
             "'python -m history_maker ricostruisci'."
         )
+        return 0
+
+    if args.comando == "deduci":
+        # Solo lettura: mostra cio' che la ricostruzione ha gia' dedotto,
+        # e le proposte che oggi rifarebbe. Non tocca l'albero — quello lo
+        # fa 'ricostruisci', dove la deduzione e' l'ultimo passo.
+        from history_maker.ricostruzione import deduzione
+
+        percorso = config.dataset / "torrebruna.sqlite"
+        if not percorso.exists():
+            print(f"Manca {percorso}. Prima: python -m history_maker ricostruisci",
+                  file=sys.stderr)
+            return 2
+        conn = sqlite3.connect(f"file:{percorso}?mode=ro", uri=True)
+        print(deduzione.rapporto(conn, deduzione.proposte(conn)))
+        conn.close()
         return 0
 
     if args.comando == "albero":

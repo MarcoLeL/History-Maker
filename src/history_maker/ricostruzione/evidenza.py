@@ -171,6 +171,18 @@ PESO_FIGLIO_IN_COMUNE = 2.8    # due genitori dello stesso bambino
 PESO_CONIUGE_IN_COMUNE = 2.4   # due mariti della stessa donna
 PESO_GENITORI_IN_COMUNE = 1.6  # stesso padre E stessa madre: fratelli o la stessa
 PESO_UN_GENITORE_IN_COMUNE = 0.5
+# Stessi genitori **e** lo stesso nome di battesimo. E' la meta'
+# mancante della prova sopra: due fratelli hanno gli stessi genitori, ma
+# non lo stesso nome — a meno che il primo non sia morto e il nome sia
+# stato riusato, e allora ci sono due atti di nascita e il veto li tiene
+# separati comunque.
+#
+# Il caso che l'ha voluta: Amadio Di Nardo, nato nel 1824 da
+# Domenicantonio Di Nardo e Rebecca Lella, e Amedeo Di Nardo, nato nel
+# 1824 dagli stessi due, marito della stessa Rosa Pelliccia. Erano due
+# uomini: uno con l'atto di nascita e tre comparse da testimone, l'altro
+# con il matrimonio e i cinque figli.
+PESO_GENITORI_E_NOME = 3.0
 PESO_NUCLEO_IN_COMUNE = 1.2    # in piu', quando coincidono coniuge e figli
 
 # Gli indizi contrari. Nessuno di questi e' un veto, e la ragione e'
@@ -235,6 +247,11 @@ ETA_MINIMA_RUOLO = mod_dati.ETA_MINIMA_RUOLO
 # Per quanti anni si puo' avere figli. Non viene da una statistica sui
 # registri ma dalla biologia, e non ha eccezioni da negoziare.
 ARCO_FERTILE = {"F": 45, "M": 60}
+# L'eta' sotto la quale non si diventa genitori. Si confronta con la
+# nascita stimata dall'eta' dichiarata, con la tolleranza larga di
+# :data:`TOLLERANZA_NASCITA_DICHIARATA`: un'eta' sbagliata di dieci anni
+# non basta a far scattare il veto.
+ETA_MINIMA_PARTO = 12
 # Di quanto un figlio puo' nascere dopo la morte del genitore: per la
 # madre di niente, per il padre di una gravidanza.
 POSTUMO_PADRE = 1
@@ -425,6 +442,109 @@ def _stesso_nome_di_battesimo(une: set, altre: set) -> bool:
             if uno and altro and nomi.somiglianza_nome(uno, altro) >= NOME_CONIUGE_UGUALE:
                 return True
     return False
+
+
+# Quanto deve somigliare una forma rara del casato a quella frequente
+# perche' possa esserne una lettura sbagliata. «Montra» per «Moretta» fa
+# 0,57 e «Mouton» per «Montanaro» 0,60: la stessa parola rovinata dalla
+# penna. «Mosca» contro «Marianacci» fa 0,34, e sono due famiglie.
+SOMIGLIANZA_DI_UNA_LETTURA = 0.50
+
+# Quante righe fanno di una forma di cognome una famiglia, e non un
+# incidente della penna. Una forma di poche righe puo' essere lo sbaglio
+# di qualunque parola — «Mouton» e «Montanaro» per la moglie di Domenico
+# Di Nardo — anche senza somigliarle; una forma che torna trenta volte e'
+# una famiglia. «Mosca» ne ha 281.
+RIGHE_DI_UNA_FAMIGLIA = 30
+
+
+def _mariti_di_due_casati(une: set, altre: set, frequenze: Counter | None = None) -> bool:
+    """I mariti hanno lo stesso nome, ma casati che nessuna penna confonde.
+
+    E' il limite della clemenza di :func:`_stesso_nome_di_battesimo`. Quella
+    nasce per le mogli: il cognome da nubile di una donna e' il campo che
+    la mano rovina di piu' — la moglie di Nicolangelo Lella e' scritta
+    Pizzi, Moretta, Motta, Desiderio e Sidri. Il casato del **marito** no:
+    e' il cognome della famiglia, lo ripete ogni figlio, e se due mariti
+    omonimi portano casati che non si somigliano sono due uomini.
+
+    Il caso: la madre di Saba Mosca, morta nel 1887, «moglie di fu
+    Giuseppe» — Giuseppe Mosca, col casato della figlia — era finita
+    dentro Maria Letizia Moretta, moglie di Giuseppe Marianacci: «Giuseppe»
+    e «Giuseppe», e il cognome del marito non contava.
+
+    Il silenzio non contraddice: un marito senza cognome non dice niente.
+    E con ``frequenze`` tutti e due i casati devono essere famiglie
+    (:data:`RIGHE_DI_UNA_FAMIGLIA`): una forma rara puo' essere lo sbaglio
+    di qualunque parola.
+    """
+    visti = False
+    for uno in une:
+        nome_uno, _, casato_uno = uno.partition("|")
+        for altro in altre:
+            nome_altro, _, casato_altro = altro.partition("|")
+            if not (nome_uno and nome_altro):
+                continue
+            if nomi.somiglianza_nome(nome_uno, nome_altro) < NOME_CONIUGE_UGUALE:
+                continue
+            if not casato_uno or not casato_altro:
+                return False
+            if frequenze is not None and min(
+                frequenze.get(casato_uno, 0), frequenze.get(casato_altro, 0)
+            ) < RIGHE_DI_UNA_FAMIGLIA:
+                return False
+            if paleografia.somiglianza(casato_uno, casato_altro) >= SOMIGLIANZA_DI_UNA_LETTURA:
+                return False
+            visti = True
+    return visti
+
+
+# Quante letture di una forma fanno di lei il casato di una scheda, e non
+# un incidente: una lettura sola puo' essere sbagliata, tre no.
+LETTURE_DI_UN_CASATO = 3
+
+
+def _un_altro_casato(certi: set, scheda: Scheda) -> bool:
+    """La scheda porta con costanza un casato che non somiglia a quelli confermati.
+
+    ``certi`` sono i casati che il padre conferma nello stesso atto
+    (``menzioni.casati_confermati``): due letture indipendenti, di cui
+    ci si fida. Se l'altra scheda porta almeno tre volte un cognome, e
+    nessuna delle sue letture somiglia a un casato confermato, e' un'altra
+    famiglia. Il caso: «Maria Catolini, figlia di Prospero Catolini»,
+    morta nel 1836, dentro Maria Pelliccia, moglie di Felice Lella.
+
+    La somiglianza lascia passare le letture sbagliate della stessa
+    parola — Montra per Moretta, Zorzi per Torzi — e i tre casi di una
+    scheda la lasciano libera di accogliere una riga sola letta storta.
+    """
+    letture = scheda.conteggi_cognome
+    if not letture or max(letture.values()) < LETTURE_DI_UN_CASATO:
+        return False
+    return all(
+        paleografia.somiglianza(casato, forma) < SOMIGLIANZA_DI_UNA_LETTURA
+        for casato in certi for forma in letture if forma
+    )
+
+
+def _casati_di_due_famiglie(miei: set, suoi: set, frequenze: Counter | None = None) -> bool:
+    """Due casati veri, che nessuna lettura puo' avvicinare.
+
+    Il silenzio non contraddice: senza cognome da una delle due parti, o
+    con una chiave in comune, la risposta e' no. E con ``frequenze`` tutti
+    e due devono essere famiglie (:data:`RIGHE_DI_UNA_FAMIGLIA`): una forma
+    rara puo' essere lo sbaglio di qualunque parola.
+    """
+    if not miei or not suoi or miei & suoi:
+        return False
+    if frequenze is not None and min(
+        max(frequenze.get(c, 0) for c in miei), max(frequenze.get(c, 0) for c in suoi)
+    ) < RIGHE_DI_UNA_FAMIGLIA:
+        return False
+    return all(
+        paleografia.somiglianza(mio, suo) < SOMIGLIANZA_DI_UNA_LETTURA
+        for mio in miei for suo in suoi
+    )
 
 
 def tasso_seconde_nozze(corpus) -> tuple[int, int]:
@@ -818,7 +938,83 @@ def _fertilita_plausibile(parti, sesso: str | None) -> bool:
     return max(parti) - min(parti) <= ARCO_FERTILE.get(sesso or "M", 60)
 
 
-def veti(una: Scheda, altra: Scheda) -> str | None:
+# Sotto questa somiglianza due patronimici non sono la stessa parola
+# letta in due modi: sono due padri. Misurato sulle otto schede
+# dell'archivio che ne portano di discordi, la separazione e' netta —
+# 'Nardo/Kardo' 0,80, 'Leonardo/Lonardo' 0,88, 'Gioachino/Gioacchino'
+# 0,90 da una parte; 'Filippo/Vito' 0,39 e 'Carmine/Lorenzo' 0,34
+# dall'altra.
+SOMIGLIANZA_FRA_PATRONIMICI = 0.65
+
+
+def _padri_diversi(una: Scheda, altra: Scheda) -> str | None:
+    """Due patronimici che non possono essere lo stesso nome letto male.
+
+    Il patronimico e' l'unica cosa che i registri scrivono **apposta**
+    per distinguere due omonimi: 'Domenico di Filippo Lella' e 'Domenico
+    di Vito Lella' sono due uomini, e il cancelliere lo sapeva. Contarlo
+    come un indizio contrario da un punto — che e' quel che si faceva —
+    lo lascia sommergere dal nome, dal cognome e dal mestiere in comune,
+    che fra due omonimi sono per forza uguali.
+
+    Il confronto e' paleografico e non letterale, perche' la stessa
+    penna scrive 'Nardo' e 'Kardo' e quelle restano un padre solo.
+    """
+    if not (una.patronimici and altra.patronimici):
+        return None
+    if una.patronimici & altra.patronimici:
+        return None
+    for mio in una.patronimici:
+        for suo in altra.patronimici:
+            if paleografia.somiglianza(mio, suo) >= SOMIGLIANZA_FRA_PATRONIMICI:
+                return None
+    return (
+        f"figli di due padri diversi ({min(una.patronimici)} / "
+        f"{min(altra.patronimici)})"
+    )
+
+
+def _genitori_diversi(una: Scheda, altra: Scheda) -> str | None:
+    """Due coppie di genitori che non hanno in comune neppure un nome di battesimo.
+
+    Il calcolo sa gia' che due genitori discordi sono un'altra famiglia,
+    e lo conta come indizio contrario (``PESO_GENITORI_DISCORDI``). Non
+    ne aveva fatto un veto per una ragione precisa, scritta accanto: basta
+    il cognome della madre letto male per arrivare li'.
+
+    Questo veto quella ragione la rispetta, perche' guarda **solo i nomi
+    di battesimo**, e un cognome rovinato non cambia il nome. Servono
+    tutti e due i genitori, e per ciascuno che nessun nome dell'uno sia
+    compatibile con nessun nome dell'altro: un padre dedotto dal
+    dichiarante puo' essere il nonno, e da solo non basta.
+
+    Il caso: Giuseppe Nicola Lella, nato nel 1834 da Pompeo e Annangela, e
+    Nicola Lella, morto a tre anni nel 1837 figlio di Francesco e Angela.
+    Nessun nome in comune, e la scheda che li teneva insieme risultava
+    figlia di due coppie.
+    """
+    if not (una.padri_nome and altra.padri_nome and una.madri_nome and altra.madri_nome):
+        return None
+
+    def battesimi(chiavi: set) -> set:
+        return {c.partition("|")[0] for c in chiavi if c.partition("|")[0]}
+
+    for mie, sue in ((una.padri_nome, altra.padri_nome), (una.madri_nome, altra.madri_nome)):
+        miei, suoi = battesimi(mie), battesimi(sue)
+        if not miei or not suoi:
+            return None
+        if any(_nomi_compatibili(mio, suo) for mio in miei for suo in suoi):
+            return None
+    return (
+        f"figli di due coppie diverse ({min(una.padri_nome)} e "
+        f"{min(una.madri_nome)} / {min(altra.padri_nome)} e {min(altra.madri_nome)})"
+    )
+
+
+def veti(
+    una: Scheda, altra: Scheda, divisioni_del_calcolo: bool = True,
+    patronimici: bool = True,
+) -> str | None:
     """Le sole contraddizioni che nessuna evidenza puo' superare.
 
     Sono poche apposta. Ogni veto in piu' e' una famiglia che nessun
@@ -834,17 +1030,42 @@ def veti(una: Scheda, altra: Scheda) -> str | None:
     ):
         return f"sesso opposto dichiarato dal ruolo ({una.sesso} / {altra.sesso})"
 
+    # -- un casato confermato contro un'altra famiglia --------------------
+    for certa, altra_scheda in ((una, altra), (altra, una)):
+        if certa.casati_certi and _un_altro_casato(certa.casati_certi, altra_scheda):
+            return (
+                f"il casato {min(certa.casati_certi)} e' confermato dal padre nello "
+                f"stesso atto, e l'altra scheda e' di un'altra famiglia "
+                f"({', '.join(sorted(altra_scheda.conteggi_cognome)[:3])})"
+            )
+
     # -- due atti di nascita ----------------------------------------------
     # Il confronto e' su TUTTI gli anni delle due schede messi insieme,
     # non sul primo di ciascuna: se una scheda ne porta gia' due, il
     # problema non e' con l'altra, e' dentro di lei — e va visto.
+    #
+    # Il conto si fa sugli ATTI, non sugli anni. Due bambini nati nello
+    # stesso anno da due atti diversi passavano indenni la tolleranza, e
+    # nel 1834 sono finiti in una scheda sola: la nascita n. 30 (Giuseppe
+    # Nicola, figlio di Pompeo Lella e Annangela Colella) e la n. 34
+    # (Giuseppe, figlio di Nicolangelo Lella e Emanuela Pelliccia). Con
+    # loro c'era anche un terzo bambino, il Nicola Lella morto a tre anni
+    # nel 1837, e la scheda che ne usciva risultava figlia di due coppie.
+    atti_nati = una.atti_di_nascita | altra.atti_di_nascita
+    if len(atti_nati) > 1:
+        return f"due atti di nascita distinti (atti {sorted(atti_nati)})"
     nascite = una.nascite_certe + altra.nascite_certe
     if nascite and max(nascite) - min(nascite) > TOLLERANZA_NASCITA_CERTA:
         return f"due atti di nascita distinti ({min(nascite)} e {max(nascite)})"
 
     # -- due atti di morte -------------------------------------------------
+    atti_morti = una.atti_di_morte | altra.atti_di_morte
     morti = set(una.morti) | set(altra.morti)
-    if len(morti) > 1:
+    if (len(atti_morti) > 1 or len(morti) > 1) and not _una_morte_scritta_due_volte(
+        una, altra
+    ):
+        if len(atti_morti) > 1:
+            return f"due atti di morte distinti (atti {sorted(atti_morti)})"
         return f"due atti di morte distinti ({min(morti)} e {max(morti)})"
 
     # -- vivi dopo il proprio funerale ------------------------------------
@@ -855,6 +1076,22 @@ def veti(una: Scheda, altra: Scheda) -> str | None:
                     f"compare viva nel {max(viva.anni_presente)} ma l'atto di morte "
                     f"e' del {morta.morte}"
                 )
+
+    # Provato e scartato: vietare che chi muore **in fasce** — con l'eta'
+    # scritta in mesi o in giorni sull'atto di morte, che non e' un'eta'
+    # dichiarata ma una misura — compaia negli anni prima di nascere.
+    # Nasceva da un caso vero: il Beatangelo Pelliccia morto a mesi otto
+    # nel 1877, figlio di Samuele e Teresa Pannunzio, finito nella scheda
+    # del Beatragelo Antonio Pelliccia che si sposa nel 1843 a
+    # quarantatre anni.
+    #
+    # Misurato: una cosa impossibile in meno, e in cambio le
+    # frammentazioni da quarantaquattro a cinquanta, i coniugi doppi da
+    # ventiquattro a ventinove, le persone con piu' di un coniuge da
+    # centoquarantacinque a centocinquantatre. E' il prezzo che il
+    # commento qui sopra annuncia: ogni veto in piu' e' una famiglia che
+    # nessun indizio potra' piu' rimettere insieme. Quel bambino si vede
+    # nel rapporto di qualita' e si stacca con una separazione a mano.
 
     # -- prima di nascere, o a un'eta' che il ruolo non consente -----------
     #
@@ -894,6 +1131,19 @@ def veti(una: Scheda, altra: Scheda) -> str | None:
     # -- la biologia -------------------------------------------------------
     parti = una.parti + altra.parti
     sesso = una.sesso or altra.sesso
+    # Un figlio nato prima che il genitore potesse averlo. Il caso: la
+    # madre di Saba Mosca (Saba nasce nel 1823) era finita dentro Maria
+    # Giovanna Moretta morta nel 1871 a quarantadue anni, cioe' nata nel
+    # 1829 — sei anni dopo la figlia. Il legame di Saba con la madre poi
+    # cadeva, scartato come impossibile, e Saba restava con un genitore.
+    stimate = [anno for anno, _ in una.nascite_stimate + altra.nascite_stimate]
+    if parti and stimate and min(parti) < (
+        min(stimate) + ETA_MINIMA_PARTO - TOLLERANZA_NASCITA_DICHIARATA
+    ):
+        return (
+            f"un figlio nel {min(parti)}, ma l'eta' dichiarata la fa nascere "
+            f"nel {min(stimate)}"
+        )
     if not _fertilita_plausibile(parti, sesso):
         return (
             f"figli dal {min(parti)} al {max(parti)}: piu' anni di quanti se ne "
@@ -903,14 +1153,45 @@ def veti(una: Scheda, altra: Scheda) -> str | None:
     if _morta_prima(morte, parti, sesso):
         return f"un figlio nasce dopo la morte ({morte})"
 
+    # -- il patronimico, che i registri scrivono apposta -------------------
+    # Se i genitori sono gia' la stessa scheda, i nomi diversi sono letture
+    # diverse degli stessi genitori, non due famiglie: Anna Lucia Landolfi
+    # figlia di «Marco» e di «Marzio», Maria Antonia Santoro di «Lucio» e
+    # di «Saverio». Il veto sui nomi resta per chi i genitori non li ha
+    # ancora riconosciuti.
+    # Chi passa 'patronimici=False' sa gia' che le due schede sono la stessa
+    # riga scritta due volte: vedi 'risoluzione.unisci_righe_doppie'.
+    if patronimici and not (una.padri & altra.padri or una.madri & altra.madri):
+        padri = _padri_diversi(una, altra)
+        if padri:
+            return padri
+        genitori = _genitori_diversi(una, altra)
+        if genitori:
+            return genitori
+
     # -- una separazione gia' decisa ---------------------------------------
     # Chi ha guardato la carta ha stabilito che quelle due righe sono di
     # due persone: il calcolo non puo' rimetterle insieme al giro dopo,
     # o la decisione varrebbe una volta sola.
-    if una.vietati and una.vietati & altra.ids:
-        return "una decisione presa prima le tiene separate"
-    if altra.vietati and altra.vietati & una.ids:
-        return "una decisione presa prima le tiene separate"
+    #
+    # Una divisione del **calcolo** e' un'altra cosa. Vale allo stesso
+    # modo dentro i giri di riconciliazione — senza, il giro dopo
+    # rimetterebbe insieme quello che questo ha appena diviso, e i due
+    # passi si annullerebbero all'infinito — ma non e' una sentenza. Il
+    # caso: i tre Egidio Pelliccia, mariti della stessa Angela Moretta.
+    # Il primo giro li aveva messi in una scheda sola che copriva
+    # ottantanove anni, e la divisione ha avuto ragione a spezzarla; ma
+    # ha spezzato anche i due frammenti che erano davvero suoi, e la
+    # prova che lo dice — la moglie, che e' la stessa donna — arriva
+    # dopo. Chi lavora **a giri finiti**, quando non c'e' piu' nessun
+    # ciclo da rompere, passa 'divisioni_del_calcolo=False'.
+    if una.separati_a_mano & altra.ids or altra.separati_a_mano & una.ids:
+        return "una decisione presa sulla pagina le tiene separate"
+    if divisioni_del_calcolo:
+        if una.vietati and una.vietati & altra.ids:
+            return "una decisione presa prima le tiene separate"
+        if altra.vietati and altra.vietati & una.ids:
+            return "una decisione presa prima le tiene separate"
 
     # -- due righe legate dentro lo stesso atto ---------------------------
     condivisi = una.atti & altra.atti
@@ -919,6 +1200,48 @@ def veti(una: Scheda, altra: Scheda) -> str | None:
         if legato:
             return legato
     return None
+
+
+# Due registrazioni della stessa morte non sono due morti: un anno solo e
+# le eta' che concordano. Il margine e' stretto perche' qui la prova e'
+# proprio l'eta': nello stesso anno muoiono un nonno di settanta e un
+# nipote di otto con lo stesso nome, e quelli restano due.
+TOLLERANZA_ETA_DELLA_STESSA_MORTE = 3
+
+
+def _morti_registrate(scheda: Scheda) -> list:
+    return [
+        menzione for menzione in scheda.menzioni
+        if menzione.tipo_atto == "morte" and menzione.ruolo in ("defunto", "defunta")
+    ]
+
+
+def _una_morte_scritta_due_volte(una: Scheda, altra: Scheda) -> bool:
+    """Le due registrazioni di morte sono lo stesso funerale, scritto due volte.
+
+    I registri lo fanno spesso: l'atto e poi la pagina d'indice, che
+    l'estrazione legge come un atto con dentro nove defunti in fila. Il
+    caso: Giuseppe Petta, morto a quarantanove anni nel 1873, ha l'atto
+    n. 42 e la riga dell'indice a pagina undici; il veto dei «due atti di
+    morte» teneva allora divise le sue due meta' — sei righe e cinque —
+    e con lui altri otto morti di quell'anno.
+
+    Si richiede l'anno identico e le eta' concordi: in un anno di
+    epidemia muoiono omonimi di eta' diverse, e quelli restano due.
+    """
+    # Prima gli anni, che la scheda tiene gia' pronti: scorrere le
+    # menzioni di una scheda da mille righe per ogni confronto costa, e
+    # qui serve solo quando i due funerali cadono nello stesso anno.
+    if len(set(una.morti) | set(altra.morti)) != 1:
+        return False
+    morti = _morti_registrate(una) + _morti_registrate(altra)
+    anni = {menzione.anno for menzione in morti if menzione.anno}
+    if len(anni) != 1:
+        return False
+    nascite = [
+        menzione.anno_nascita for menzione in morti if menzione.anno_nascita is not None
+    ]
+    return not nascite or max(nascite) - min(nascite) <= TOLLERANZA_ETA_DELLA_STESSA_MORTE
 
 
 def _ruoli_incompatibili(
@@ -946,6 +1269,192 @@ def _ruoli_incompatibili(
             f"nel {anno} e' {ruolo} ma nascerebbe nel {nascita}, cioe' a "
             f"{anno - nascita} anni"
         )
+    return None
+
+
+# Sotto questa somiglianza due nomi di sposo non sono lo stesso nome
+# letto due volte. Piu' larga della soglia sui patronimici, perche' qui
+# si confrontano nomi interi — «Angiola» contro «Maria Saveria
+# Clementina» — dove una parte in comune e' normale.
+SOMIGLIANZA_FRA_SPOSI = 0.60
+
+
+def _due_matrimoni_con_nomi_diversi(scheda: Scheda) -> str | None:
+    """Sposarsi due volte si puo'; cambiare nome nel frattempo no.
+
+    Le seconde nozze sono comuni in questi registri — si resta vedovi
+    presto — e non sono una contraddizione. Ma il proprio nome non
+    cambia: chi e' «Angiola di Pardo» nel matrimonio del 1813 non e'
+    «Maria Saveria Clementina Di Nardo» in quello del 1827. Quando i due
+    atti danno due nomi che non si somigliano, gli sposi sono due.
+
+    Il confronto e' paleografico: «Angela» e «Angiola» sono la stessa
+    donna, e i registri le scrivono tutt'e due.
+    """
+    sposalizi: dict[int, str] = {}
+    for menzione in scheda.menzioni:
+        if menzione.tipo_atto != "matrimonio" or menzione.ruolo not in ("sposo", "sposa"):
+            continue
+        intero = " ".join(x for x in (menzione.nome, menzione.cognome) if x)
+        if intero:
+            sposalizi.setdefault(menzione.atto, intero)
+    if len(sposalizi) < 2:
+        return None
+    nomi_sposi = sorted(sposalizi.values())
+    for i, mio in enumerate(nomi_sposi):
+        for suo in nomi_sposi[i + 1:]:
+            if paleografia.somiglianza(mio, suo) < SOMIGLIANZA_FRA_SPOSI:
+                return f"sposa due volte con nomi diversi ({mio} / {suo})"
+    return None
+
+
+# Quante volte una forma del nome deve comparire, e che fetta delle
+# menzioni deve tenere, perche' non sia una lettura sbagliata isolata ma
+# una delle due persone che stanno nella scheda.
+VOLTE_PER_UN_SECONDO_NOME = 3
+FETTA_PER_UN_SECONDO_NOME = 0.15
+
+# Quanto lungo dev'essere il pezzo iniziale in comune perche' due nomi
+# siano lo stesso: 'Domenico' e 'Domenicantonio' condividono 'domenic'.
+PREFISSO_FRA_NOMI = 6
+
+
+def _pezzi_del_nome(nome: str) -> set:
+    return {paleografia.normalizza(x) for x in (nome or "").split() if len(x) > 2}
+
+
+def _pezzi_compatibili(mio: str, suo: str) -> bool:
+    """Due pezzi di nome che possono essere la stessa parola."""
+    if paleografia.somiglianza(mio, suo) >= 0.75:
+        return True
+    comune = 0
+    for a, b in zip(mio, suo):
+        if a != b:
+            break
+        comune += 1
+    return comune >= PREFISSO_FRA_NOMI
+
+
+def _secondi_nomi_diversi(uno: str, altro: str) -> bool:
+    """Due nomi composti, ciascuno con un pezzo scritto che l'altro non ha.
+
+    «Maria Giovanna» e «Maria Letizia» hanno in comune «Maria», e fino a
+    qui bastava: un pezzo in comune voleva dire la stessa persona nominata
+    piu' o meno per esteso. Ma qui nessuno dei due omette niente — tutti e
+    due scrivono il secondo nome, e i due secondi nomi sono diversi. Sono
+    due donne.
+
+    Il caso: Saba Mosca, morta nel 1887, figlia di Giuseppe Mosca e di
+    Maria Giovanna Moretta. La madre era stata unita a Maria Letizia
+    Moretta, moglie di Giuseppe Marianacci — stesso casato, «Maria»
+    compatibile, eta' vicine — e da li' anche il padre era finito dentro
+    Giuseppe Marianacci, «sposato alla stessa persona». Saba restava senza
+    genitori.
+
+    Il silenzio non contraddice: «Maria» contro «Maria Giovanna» resta
+    compatibile, perche' il secondo nome si omette spesso. E gli stessi
+    pezzi in un altro ordine («Anna Maria», «Maria Anna»), o attaccati
+    («Giuseppe Antonio», «Giuseppantonio»), restano lo stesso nome.
+    """
+    miei, suoi = _pezzi_del_nome(uno), _pezzi_del_nome(altro)
+    if len(miei) < 2 or len(suoi) < 2 or miei == suoi:
+        return False
+    resto_mio = [p for p in miei if not any(_pezzi_compatibili(p, s) for s in suoi)]
+    resto_suo = [s for s in suoi if not any(_pezzi_compatibili(s, p) for p in miei)]
+    if not resto_mio or not resto_suo:
+        return False
+    attaccati = "".join(sorted(miei)), "".join(sorted(suoi))
+    return paleografia.somiglianza(*attaccati) < 0.85
+
+
+def _nomi_compatibili(uno: str, altro: str) -> bool:
+    """Due forme del nome possono essere la stessa persona?
+
+    Non basta la somiglianza fra stringhe intere: «Giovanni» e «Giovanni
+    Dottor Savicoli» sono lo stesso uomo con un titolo in mezzo, e
+    misurate per intero si somigliano poco. Si confrontano allora i
+    **pezzi**: se un pezzo dell'uno e' un pezzo dell'altro, e' la stessa
+    persona nominata piu' o meno per esteso — a meno che tutti e due non
+    scrivano un secondo nome, e i secondi nomi siano diversi
+    (``_secondi_nomi_diversi``).
+    """
+    if _secondi_nomi_diversi(uno, altro):
+        return False
+    miei, suoi = _pezzi_del_nome(uno), _pezzi_del_nome(altro)
+    if not miei or not suoi:
+        return True
+    for mio in miei:
+        for suo in suoi:
+            if _pezzi_compatibili(mio, suo):
+                return True
+    # E senza spazi, per «Giuseppe Antonio» contro «Giuseppantonio».
+    attaccato = paleografia.normalizza(uno).replace(" ", "")
+    suo_attaccato = paleografia.normalizza(altro).replace(" ", "")
+    if paleografia.somiglianza(attaccato, suo_attaccato) >= 0.72:
+        return True
+    return attaccato.startswith(suo_attaccato) or suo_attaccato.startswith(attaccato)
+
+
+def _due_nomi_di_battesimo(scheda: Scheda) -> str | None:
+    """La scheda porta due nomi di battesimo che non stanno in una persona.
+
+    Il caso vero: sessantotto menzioni sotto una scheda sola, ventisette
+    che dicono «Nicola Di Nardo» e trentaquattro «Camillo Di Nardo».
+    Sono due fratelli, e il cognome in comune piu' il mestiere in comune
+    — che fra fratelli sono per forza uguali — bastavano a tenerli
+    insieme.
+
+    Si chiede che tutt'e due le forme siano **frequenti**: una lettura
+    sbagliata capita, e non deve spezzare una scheda buona. Solo quando
+    ciascuna tiene almeno un sesto delle menzioni si tratta di due
+    persone e non di uno sbaglio.
+    """
+    forme: Counter = Counter()
+    for menzione in scheda.menzioni:
+        if menzione.nome:
+            forme[menzione.nome.strip()] += 1
+    if len(forme) < 2:
+        return None
+    totale = sum(forme.values())
+    grosse = [
+        nome for nome, quante in forme.items()
+        if quante >= VOLTE_PER_UN_SECONDO_NOME
+        and quante >= totale * FETTA_PER_UN_SECONDO_NOME
+    ]
+    for i, mio in enumerate(grosse):
+        for suo in grosse[i + 1:]:
+            if not _nomi_compatibili(mio, suo):
+                return (
+                    f"due nomi di battesimo diversi ({mio} x{forme[mio]} / "
+                    f"{suo} x{forme[suo]})"
+                )
+    return None
+
+
+def _ruoli_che_si_escludono_nello_stesso_atto(scheda: Scheda) -> str | None:
+    """La scheda tiene due righe che l'atto stesso dichiara di due persone.
+
+    E' l'altra meta' di :data:`COPPIE_ESCLUSIVE`. Quello e' un veto e
+    impedisce la fusione fra due schede; questo guarda dentro una scheda
+    sola, dove la fusione e' gia' avvenuta e nessuno la rimette in
+    discussione. Senza, un uomo che «dichiara la propria morte» resta
+    tale per sempre — e con due atti di morte addosso non puo' piu'
+    essere ricomposto con la sua meta' vera: e' il caso di Amedeo Di
+    Nardo, che si portava dentro il defunto Nicola dell'atto del 1867 e
+    per quello non si univa ad Amadio.
+    """
+    per_atto: dict[int, set] = {}
+    for menzione in scheda.menzioni:
+        if menzione.ruolo:
+            per_atto.setdefault(menzione.atto, set()).add(menzione.ruolo)
+    for atto, ruoli in per_atto.items():
+        for coppia in COPPIE_ESCLUSIVE:
+            if coppia <= ruoli:
+                due = sorted(coppia)
+                return (
+                    f"nell'atto {atto} e' insieme {due[0]} e {due[1]}, che l'atto "
+                    f"stesso dichiara due persone"
+                )
     return None
 
 
@@ -989,6 +1498,62 @@ def incoerenze(scheda: Scheda) -> list[str]:
                     f"atto di nascita e' del {nascita}"
                 )
                 break
+    esclusivi = _ruoli_che_si_escludono_nello_stesso_atto(scheda)
+    if esclusivi:
+        guai.append(esclusivi)
+
+    battesimi = _due_nomi_di_battesimo(scheda)
+    if battesimi:
+        guai.append(battesimi)
+
+    sposi = _due_matrimoni_con_nomi_diversi(scheda)
+    if sposi:
+        guai.append(sposi)
+
+    # Due patronimici incompatibili nella stessa scheda: e' una fusione
+    # di due omonimi che i registri distinguevano.
+    if len(scheda.patronimici) > 1:
+        distinti = sorted(scheda.patronimici)
+        for i, mio in enumerate(distinti):
+            for suo in distinti[i + 1:]:
+                if paleografia.somiglianza(mio, suo) < SOMIGLIANZA_FRA_PATRONIMICI:
+                    guai.append(f"due patronimici diversi ({mio} / {suo})")
+                    break
+            else:
+                continue
+            break
+
+    # L'eta' che la scheda dichiara cade fuori dalla finestra che la
+    # scheda stessa si e' costruita. E' la contraddizione che ha tenuto in
+    # piedi il caso Raffa: una menzione dice 'ventidue anni nel 1873',
+    # quindi nata nel 1851; un'altra la dice madre di un uomo nato nel
+    # 1828, quindi nata prima del 1820. Le due cose non possono stare
+    # nella stessa donna, ma nessuna delle due e' un atto di nascita, e
+    # il controllo esistente confrontava l'eta' dichiarata **solo** con
+    # un atto di nascita. La tolleranza e' larga — i registri arrotondano
+    # le eta' e le finestre hanno gia' i loro margini — perche' qui si
+    # cercano gli assurdi, non le imprecisioni.
+    if scheda.finestra is not None and scheda.nascite_stimate:
+        basso, alto = scheda.finestra
+        for stimata, _ in scheda.nascite_stimate:
+            fuori = max(basso - stimata, stimata - alto)
+            if fuori > TOLLERANZA_NASCITA_DICHIARATA:
+                guai.append(
+                    f"l'eta' dichiarata la fa nascere nel {stimata}, ma le altre "
+                    f"menzioni la vogliono nata fra il {basso} e il {alto}"
+                )
+                break
+
+    # Le finestre di nascita che la scheda ha raccolto non si toccano.
+    # 'Scheda.finestra' e' l'intersezione di tutte, e quando le menzioni
+    # si contraddicono l'intersezione esce rovesciata — un intervallo che
+    # comincia dopo essere finito. Nessuno la guardava, e intanto la
+    # donna del 1851 restava madre di un uomo nato nel 1828.
+    if scheda.finestra is not None and scheda.finestra[0] > scheda.finestra[1]:
+        guai.append(
+            f"le finestre di nascita non si toccano: nata dopo il "
+            f"{scheda.finestra[0]} e prima del {scheda.finestra[1]}"
+        )
     if not _fertilita_plausibile(scheda.parti, scheda.sesso):
         guai.append(
             f"figli dal {min(scheda.parti)} al {max(scheda.parti)}"
@@ -1020,6 +1585,17 @@ COPPIE_ESCLUSIVE = (
     frozenset({"padre", "madre"}),
     frozenset({"padre dello sposo", "madre dello sposo"}),
     frozenset({"padre della sposa", "madre della sposa"}),
+    # Non si dichiara la propria morte, e non si fa da testimone al
+    # proprio funerale. Sembra ovvio e non lo era: in otto atti la stessa
+    # scheda compariva come dichiarante e come defunto, e in due di
+    # quelli i due nomi sono identici — padre e figlio, come i due
+    # Carmine Moretta del 1839. Uno di questi otto casi impediva da solo
+    # di ricomporre Amadio e Amedeo Di Nardo, perche' la scheda si
+    # ritrovava due atti di morte.
+    frozenset({"dichiarante", "defunto"}),
+    frozenset({"dichiarante", "defunta"}),
+    frozenset({"testimone", "defunto"}),
+    frozenset({"testimone", "defunta"}),
 )
 
 
@@ -1058,6 +1634,121 @@ def _legate_nello_stesso_atto(una: Scheda, altra: Scheda, atti: set) -> str | No
 # Il confronto
 # ---------------------------------------------------------------------------
 
+# I ruoli che dentro un atto appartengono a una persona sola. Due righe
+# con lo stesso di questi ruoli, nello stesso atto e con lo stesso nome,
+# sono la stessa persona nominata due volte — non due omonimi.
+RUOLI_UNICI_NELL_ATTO = frozenset({
+    "sposo", "sposa", "defunto", "defunta", "neonato", "neonata",
+    "padre", "madre", "ufficiale",
+})
+
+# Quanto pesa quel riconoscimento. E' quasi una certezza: la sola
+# alternativa e' che l'atto nomini due persone diverse con lo stesso
+# nome nello stesso ruolo, che per uno sposo o un defunto non e'
+# possibile e per un genitore vorrebbe dire due padri.
+PESO_STESSA_RIGA_DUE_VOLTE = 4.0
+
+# Chi dichiara la nascita di un figlio, o la morte di un figlio, quasi
+# sempre e' il padre: l'atto lo scrive due volte, una come dichiarante e
+# una come genitore, e sono la stessa riga. Non e' la certezza del caso
+# sopra — il dichiarante puo' essere il nonno omonimo, o uno zio — ma e'
+# molto piu' di quanto dicano un nome e un cognome per conto loro.
+#
+# Il caso che l'ha voluta: **Domenicantonio Di Nardo**, marito di Rebecca
+# Lella, che nell'albero era quattro uomini. Negli atti 826 (1821) e 897
+# (1822) compare come dichiarante *e* come padre del figlio morto, con la
+# stessa madre accanto in tutte e due le righe, e le due righe restavano
+# due persone: quella con l'eta' e il mestiere, e quella nuda.
+COPPIE_CHE_SI_SOVRAPPONGONO = (
+    frozenset({"dichiarante", "padre"}),
+    frozenset({"dichiarante", "madre"}),
+)
+PESO_DICHIARANTE_E_GENITORE = 2.5
+
+
+def _nominata_due_volte_nello_stesso_atto(una: Scheda, altra: Scheda) -> str | None:
+    """Le due schede sono la stessa riga di un atto, letta due volte.
+
+    Gli atti di matrimonio nominano gli sposi due volte — in apertura e
+    nella formula che li dichiara uniti — e i verbali di morte ripetono
+    i genitori del defunto. Quando le due righe finiscono in due schede,
+    una delle due resta un frammento da una menzione sola, appeso
+    all'albero per un filo: nell'archivio di Torrebruna sono novantaquattro
+    coppie, e quasi tutte hanno questa forma.
+    """
+    condivisi = una.eventi & altra.eventi
+    if not condivisi:
+        return None
+    for mia in una.menzioni:
+        evento = mia.evento or mia.atto
+        if evento not in condivisi or mia.ruolo not in RUOLI_UNICI_NELL_ATTO:
+            continue
+        mio_nome = " ".join(x for x in (mia.nome, mia.cognome) if x)
+        for sua in altra.menzioni:
+            if (sua.evento or sua.atto) != evento or sua.ruolo != mia.ruolo:
+                continue
+            suo_nome = " ".join(x for x in (sua.nome, sua.cognome) if x)
+            if mio_nome and paleografia.somiglianza(mio_nome, suo_nome) >= 0.95:
+                dove = (
+                    f"nell'atto {mia.atto}" if mia.atto == sua.atto
+                    else f"negli atti {mia.atto} e {sua.atto}, che sono lo "
+                         f"stesso evento"
+                )
+                return (
+                    f"{dove} sono {mia.ruolo} tutt'e due, con lo stesso nome: "
+                    f"e' una riga sola letta due volte"
+                )
+    return None
+
+
+def _due_schede_con_lo_stesso_nome(una: Scheda, altra: Scheda) -> bool:
+    """Le due schede portano lo stesso nome, e tutte e due ne portano uno.
+
+    Piu' severa di :func:`_nomi_compatibili`, che davanti a un nome vuoto
+    risponde di si': qui il silenzio non e' un accordo, perche' la prova
+    che regge sopra vive proprio sul nome.
+    """
+    miei = {paleografia.normalizza(x) for x in una.nomi}
+    suoi = {paleografia.normalizza(x) for x in altra.nomi}
+    if not miei or not suoi:
+        return False
+    return any(_nomi_compatibili(mio, suo) for mio in miei for suo in suoi)
+
+
+def _dichiarante_e_genitore(una: Scheda, altra: Scheda) -> str | None:
+    """Nello stesso atto, il dichiarante e il genitore con lo stesso nome.
+
+    Vedi :data:`COPPIE_CHE_SI_SOVRAPPONGONO`: non e' la stessa certezza
+    di due righe con lo **stesso** ruolo, perche' a dichiarare puo'
+    andare un nonno che porta lo stesso nome. Ma quando l'atto scrive due
+    volte lo stesso nome e cognome, a due passi di distanza, la lettura
+    ovvia e' che sia una riga sola.
+    """
+    condivisi = una.atti & altra.atti
+    if not condivisi:
+        return None
+    for mia in una.menzioni:
+        if mia.atto not in condivisi:
+            continue
+        mio_nome = " ".join(x for x in (mia.nome, mia.cognome) if x)
+        if not mio_nome:
+            continue
+        for sua in altra.menzioni:
+            if sua.atto != mia.atto:
+                continue
+            coppia = frozenset({mia.ruolo or "", sua.ruolo or ""})
+            if coppia not in COPPIE_CHE_SI_SOVRAPPONGONO:
+                continue
+            suo_nome = " ".join(x for x in (sua.nome, sua.cognome) if x)
+            if paleografia.somiglianza(mio_nome, suo_nome) >= 0.95:
+                due = sorted(coppia)
+                return (
+                    f"nell'atto {mia.atto} e' {due[0]} e {due[1]} con lo stesso "
+                    f"nome: chi dichiara un figlio quasi sempre e' il genitore"
+                )
+    return None
+
+
 def confronta(
     una: Scheda, altra: Scheda, modello: Modello, coniugi: bool = True
 ) -> Evidenza:
@@ -1072,6 +1763,16 @@ def confronta(
     if impossibile:
         prove.vieta(impossibile)
         return prove
+
+    doppia = _nominata_due_volte_nello_stesso_atto(una, altra)
+    if doppia:
+        prove.aggiungi("stessa riga", PESO_STESSA_RIGA_DUE_VOLTE, doppia)
+    else:
+        sovrapposta = _dichiarante_e_genitore(una, altra)
+        if sovrapposta:
+            prove.aggiungi(
+                "dichiarante e genitore", PESO_DICHIARANTE_E_GENITORE, sovrapposta
+            )
 
     peso, dettaglio = modello.cognome(una, altra)
     prove.aggiungi("cognome", peso, dettaglio)
@@ -1121,9 +1822,15 @@ def confronta(
     padri_comuni = bool(una.padri & altra.padri)
     madri_comuni = bool(una.madri & altra.madri)
     if padri_comuni and madri_comuni:
-        prove.aggiungi(
-            "genitori in comune", PESO_GENITORI_IN_COMUNE, "stessi genitori",
-        )
+        if _due_schede_con_lo_stesso_nome(una, altra):
+            prove.aggiungi(
+                "genitori e nome", PESO_GENITORI_E_NOME,
+                "stessi genitori e lo stesso nome: due fratelli non ce l'hanno",
+            )
+        else:
+            prove.aggiungi(
+                "genitori in comune", PESO_GENITORI_IN_COMUNE, "stessi genitori",
+            )
     elif padri_comuni or madri_comuni:
         prove.aggiungi(
             "un genitore in comune", PESO_UN_GENITORE_IN_COMUNE,
@@ -1145,12 +1852,30 @@ def confronta(
         if peso_padre < 0 and peso_madre < 0:
             # Due genitori che si contraddicono tutti e due sono un'altra
             # famiglia. Resta un indizio, non un veto: basta una lettura
-            # rovinata del cognome della madre per arrivare qui.
+            # rovinata del cognome della madre per arrivare qui. Quando a
+            # non tornare sono anche i nomi di battesimo, invece, e' un
+            # veto (``_genitori_diversi``): quelli il cognome non li tocca.
             prove.aggiungi(
                 "genitori discordi", PESO_GENITORI_DISCORDI,
                 f"{det_padre}; {det_madre}",
             )
         else:
+            # Due genitori che tornano tutti e due, per nome, dicono
+            # «fratelli o la stessa persona» come i genitori in comune qui
+            # sopra, e valgono altrettanto finche' il nome di battesimo non
+            # dice quale dei due. Nel primo giro le schede dei genitori non
+            # ci sono ancora e questo ramo fa le loro veci: senza il tetto,
+            # la neonata Maria Teresa Ferrara del 1860 si prendeva il
+            # fratello Felice Maria, sposo nel 1878, con +5,2 dai soli nomi
+            # del padre e della madre.
+            if (
+                peso_padre > 0 and peso_madre > 0 and una.nomi and altra.nomi
+                and not _due_schede_con_lo_stesso_nome(una, altra)
+            ):
+                quota = PESO_GENITORI_IN_COMUNE / (peso_padre + peso_madre)
+                if quota < 1:
+                    peso_padre, peso_madre = peso_padre * quota, peso_madre * quota
+                    det_padre = f"{det_padre} (fratelli o la stessa: il nome non lo dice)"
             prove.aggiungi("padre", peso_padre, det_padre)
             prove.aggiungi("madre", peso_madre, det_madre)
 
@@ -1172,9 +1897,34 @@ def confronta(
             # errori di lettura del cognome di sua moglie. Dentro una
             # famiglia il nome di battesimo del coniuge e' il campo
             # stabile; il cognome e' quello che la mano rovina.
-            if _stesso_nome_di_battesimo(una.coniugi_nome, altra.coniugi_nome):
-                peso = PESO_CONIUGE_COGNOME_DISCORDE
-                dettaglio = f"{dettaglio}: stesso nome, cognome diverso"
+            if figli_comuni:
+                # Un figlio ha un padre e una madre, non due. Se queste
+                # due schede risultano tutt'e due genitori dello stesso
+                # bambino, il loro coniuge e' la stessa persona — sia
+                # come sia scritto — e far pagare le seconde nozze qui e'
+                # la frammentazione che si difende da sola: le due meta'
+                # di un uomo spezzato hanno coniugi «diversi» proprio
+                # perche' ciascuna si e' presa una lettura della stessa
+                # moglie, e quella differenza impedisce poi di rimetterle
+                # insieme. Misurato: centoventitre coppie di genitori
+                # dello stesso figlio con nome identico restavano
+                # separate cosi'.
+                peso = 0.0
+                dettaglio = (
+                    f"{dettaglio}: ma sono genitori dello stesso figlio, "
+                    f"quindi e' un coniuge solo"
+                )
+            elif _stesso_nome_di_battesimo(una.coniugi_nome, altra.coniugi_nome):
+                if (una.sesso or altra.sesso) == "F" and _mariti_di_due_casati(
+                    una.coniugi_nome, altra.coniugi_nome, modello.cognomi
+                ):
+                    # Due donne, due mariti omonimi di due famiglie: sono
+                    # due nozze vere, non una lettura rovinata.
+                    peso = modello.seconde_nozze
+                    dettaglio = f"{dettaglio}: stesso nome, ma il marito e' di un'altra famiglia"
+                else:
+                    peso = PESO_CONIUGE_COGNOME_DISCORDE
+                    dettaglio = f"{dettaglio}: stesso nome, cognome diverso"
             elif coniugi and (guadagnato := prova_dai_coniugi(una, altra, modello)) > 0:
                 # I nomi discordano ma le schede dei due coniugi no: e'
                 # una moglie sola, letta male. Vale quanto quelle due
@@ -1184,6 +1934,17 @@ def confronta(
             else:
                 peso = modello.seconde_nozze
                 dettaglio = f"{dettaglio}: servirebbero seconde nozze"
+        if peso > 0 and (una.sesso or altra.sesso) == "M" and _casati_di_due_famiglie(
+            una.chiavi_cognome, altra.chiavi_cognome, modello.cognomi
+        ):
+            # La moglie somiglia, ma i due uomini portano due casati che
+            # nessuna penna confonde. Giuseppe Mosca e Giuseppe Marianacci
+            # si univano cosi': «Maria Giovanna Moretta» e «Maria Moretta»
+            # facevano una moglie sola, e la moglie in comune pesava piu'
+            # dei due cognomi. Il casato di un uomo lo ripete ogni figlio:
+            # la somiglianza della moglie non basta a scavalcarlo.
+            peso = 0.0
+            dettaglio = f"{dettaglio}: ma i due uomini sono di due casati"
         prove.aggiungi("coniuge", peso, dettaglio)
 
     # --- il patronimico ---------------------------------------------------

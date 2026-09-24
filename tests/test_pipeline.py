@@ -171,6 +171,39 @@ def test_registri_non_pertinenti_non_vengono_trascritti(config, registro):
     assert slug_trovati == {registro.slug}
 
 
+def test_un_solo_registro_quando_il_buco_sta_in_un_fondo_solo(config, registro):
+    """L'anno e' un filtro troppo largo per rifare un registro.
+
+    Il caso vero: 1837-morti-17810411 aveva quaranta atti mancanti e
+    nove pagine, ma '--anno 1837' ne trascriveva cento in trentaquattro
+    chiamate. Con le ultime diciotto della giornata non ci si arrivava.
+    """
+    altro = Registro(
+        ark_url="https://antenati.cultura.gov.it/ark:/12657/an_ua999/abc",
+        contesto=registro.contesto, titolo=registro.titolo, tipologia="Morti",
+        anno=registro.anno, archive_id="999",
+    )
+    Catalogo(comune="Torrebruna", registri=[registro, altro]).salva(config.catalogo)
+    for reg in (registro, altro):
+        _immagine_finta(config.immagini / reg.slug / "0001.jpg", (400, 400))
+
+    tutti = transcribe.pagine_da_trascrivere(config)
+    assert {p.registro.slug for p in tutti} == {registro.slug, altro.slug}
+
+    solo = transcribe.pagine_da_trascrivere(config, registro=altro.slug)
+    assert {p.registro.slug for p in solo} == {altro.slug}
+    # basta un pezzo dello slug, non serve scriverlo intero
+    assert transcribe.pagine_da_trascrivere(config, registro="999")
+    # uno spazio o un ritorno a capo in coda non deve far sparire tutto:
+    # e' successo davvero, leggendo i nomi da un file scritto su Windows
+    assert transcribe.pagine_da_trascrivere(config, registro=altro.slug + "\r")
+
+    # e un filtro che non combacia si fa sentire, invece di trascrivere
+    # zero pagine uscendo con successo
+    with pytest.raises(ValueError, match="nessun registro"):
+        transcribe.pagine_da_trascrivere(config, registro="non-esiste")
+
+
 def test_stima_conta_le_invocazioni_non_gli_euro(config, registro, tmp_path):
     pagine = [
         transcribe.Pagina(_immagine_finta(tmp_path / f"{i:04d}.jpg", (400, 400)), registro)

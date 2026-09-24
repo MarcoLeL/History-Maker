@@ -488,13 +488,15 @@ def _risali(
         segnaposti = ",".join("?" * len(fronte))
         prossimi = []
         for riga in conn.execute(
-            f"SELECT figlio, genitore, tipo, atto FROM legami WHERE figlio IN ({segnaposti})",
+            f"SELECT figlio, genitore, tipo, atto, stato, confidenza FROM legami "
+            f"WHERE figlio IN ({segnaposti})",
             fronte,
         ):
             chiave = (riga["genitore"], riga["figlio"], "filiazione")
             archi.setdefault(chiave, {
                 "da": riga["genitore"], "a": riga["figlio"],
                 "tipo": "filiazione", "ruolo": riga["tipo"], "atto": riga["atto"],
+                "stato": riga["stato"], "confidenza": riga["confidenza"],
             })
             livello = livelli[riga["figlio"]] - 1
             if riga["genitore"] not in livelli:
@@ -515,13 +517,15 @@ def _scendi(
         segnaposti = ",".join("?" * len(fronte))
         prossimi = []
         for riga in conn.execute(
-            f"SELECT figlio, genitore, tipo, atto FROM legami WHERE genitore IN ({segnaposti})",
+            f"SELECT figlio, genitore, tipo, atto, stato, confidenza FROM legami "
+            f"WHERE genitore IN ({segnaposti})",
             fronte,
         ):
             chiave = (riga["genitore"], riga["figlio"], "filiazione")
             archi.setdefault(chiave, {
                 "da": riga["genitore"], "a": riga["figlio"],
                 "tipo": "filiazione", "ruolo": riga["tipo"], "atto": riga["atto"],
+                "stato": riga["stato"], "confidenza": riga["confidenza"],
             })
             livello = livelli[riga["genitore"]] + 1
             if riga["figlio"] not in livelli:
@@ -551,13 +555,14 @@ def _aggiungi_altri_genitori(
         return
     segnaposti = ",".join("?" * len(figli))
     for riga in conn.execute(
-        f"SELECT figlio, genitore, tipo, atto FROM legami "
+        f"SELECT figlio, genitore, tipo, atto, stato, confidenza FROM legami "
         f"WHERE figlio IN ({segnaposti})",
         figli,
     ).fetchall():
         archi.setdefault((riga["genitore"], riga["figlio"], "filiazione"), {
             "da": riga["genitore"], "a": riga["figlio"],
             "tipo": "filiazione", "ruolo": riga["tipo"], "atto": riga["atto"],
+            "stato": riga["stato"], "confidenza": riga["confidenza"],
         })
         if riga["genitore"] not in livelli:
             livelli[riga["genitore"]] = livelli[riga["figlio"]] - 1

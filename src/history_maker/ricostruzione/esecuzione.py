@@ -42,8 +42,8 @@ from pathlib import Path
 from history_maker import paleografia
 from history_maker.config import Config
 from history_maker.ricostruzione import (
-    anomalie as mod_anomalie, attributi, cache, lettura, modello as mod, registro,
-    risoluzione,
+    anomalie as mod_anomalie, attributi, cache, deduzione, lettura,
+    modello as mod, registro, risoluzione,
 )
 from history_maker.ricostruzione.scheda import Scheda
 
@@ -121,6 +121,20 @@ def costruisci(
     ricondotti = cognomi_dal_padre(conn, esito, numeri)
     if ricondotti:
         logger.info("  %d cognomi ricondotti a quello del padre", ricondotti)
+
+    # Per ultimo, quando l'albero c'e' gia': i genitori che nessun atto
+    # scrive, dedotti dal nome dei nipoti. Va dopo tutto il resto perche'
+    # legge l'albero finito — chi sono i figli di chi, e in che ordine
+    # sono nati — e perche' cio' che aggiunge non deve poter influenzare
+    # nessuna delle decisioni prese sopra.
+    proposte = deduzione.proposte(conn)
+    dedotti = deduzione.applica(conn, proposte)
+    if proposte:
+        logger.info("  %d genitori dedotti dal nome dei nipoti, %d ambigui",
+                    dedotti, sum(1 for p in proposte if not p.sicura))
+        (config.dataset / "deduzioni.md").write_text(
+            deduzione.rapporto(conn, proposte), encoding="utf-8"
+        )
     registro.salva(conn, esito.decisioni)
     _indicizza(conn)
     conn.commit()
@@ -207,7 +221,7 @@ def _scrivi_individui(
             numeri[chiave],
             f"P{chiave}",
             _forma(scheda.nomi, attestazione_nomi),
-            _forma(scheda.cognomi, attestazione_cognomi),
+            cognome_di_famiglia(esito, scheda, attestazione_cognomi),
             scheda.sesso,
             scheda.anno_nascita,
             "certa" if scheda.nascite_certe else ("stimata" if scheda.nascite_stimate else None),
@@ -274,6 +288,99 @@ def _forma(valori: Counter, attestazione: Counter) -> str | None:
     from history_maker.ricostruzione.scheda import _piu_attestata
 
     return _piu_attestata(valori, attestazione)
+
+
+def cognome_di_famiglia(
+    esito: risoluzione.Esito, scheda: Scheda, attestazione: Counter
+) -> str | None:
+    """Fra le letture del cognome, quella che i figli confermano.
+
+    ``_piu_attestata`` sceglie la forma guardando **solo** la scheda e la
+    frequenza nell'archivio, e ogni tanto sbaglia il verso: Luigi De
+    Lucia e' letto 'di Suio' una volta, 'di Fazio' due e 'De Lucia' due,
+    e vince 'di Fazio' perche' nel secolo e' un po' piu' frequente. Nel
+    grafo pero' c'e' una prova che la frequenza non ha: i suoi due
+    figli, Mercedes e Fileno, si chiamano tutti e due **De Lucia**.
+
+    Un figlio legittimo porta il cognome del padre. Quando fra le letture
+    del genitore ce n'e' una che i figli portano, e' quella la buona, e
+    non c'e' bisogno di nessuna soglia per dirlo: e' la stessa parola
+    letta due volte, una volta male e una volta bene, e i figli fanno da
+    seconda lettura.
+
+    Dei parenti si guarda il cognome **scelto**, non tutte le loro
+    letture: Mercedes De Lucia ha 'di Fazio' fra le sue, ereditata dalla
+    stessa pagina che ha confuso il padre, e bastava quella a confermare
+    la scelta sbagliata. Il cognome scelto e' invece cio' che ognuno dei
+    parenti, guardato per conto suo, e' risultato chiamarsi.
+
+    Vale nei due versi, perche' la regola e' una sola — padre e figli
+    portano lo stesso casato — e non dice da che parte stia la lettura
+    buona. Verso il basso: Luigi, letto 'di Fazio', ha due figli De
+    Lucia. Verso l'alto: **Chiara**, letta 'Lalli' e 'Lella' e
+    'Colella', e' figlia di Giuseppe **Lella** — e 'Lalli' vinceva solo
+    perche' nel secolo e' un po' piu' frequente.
+
+    Non cambia nessun legame e non unisce niente: cambia **come si
+    chiama** la scheda, che e' cio' che si vede sull'albero. E non
+    inventa: se nessuna delle letture della scheda torna nei parenti,
+    lascia la scelta com'era e ci pensa
+    ``anomalie.padre_di_un_altro_casato``.
+    """
+    scelta = _forma(scheda.cognomi, attestazione)
+    if scelta is None:
+        return scelta
+    # I figli valgono piu' dei padri: sono di piu', e un padre puo'
+    # essere il patrigno o il padre naturale mentre un figlio legittimo
+    # il casato ce l'ha per legge.
+    dai_parenti: Counter = Counter()
+    #
+    # I figli contano solo per un uomo: quelli di una donna portano il
+    # casato del marito. Chiara Lella, moglie di Antonio Marianacci, ha
+    # una figlia letta «Leonice Lalli» — il cognome della madre copiato
+    # sulla figlia — e bastava quella a confermare 'Lalli' contro il
+    # 'Lella' del padre e dell'atto di nascita.
+    figli = scheda.figli if scheda.sesso == "M" else set()
+    for parenti, peso in ((figli, 2), (scheda.padri, 1)):
+        for chiave in parenti:
+            parente = esito.schede.get(chiave)
+            if parente is None or not parente.cognomi:
+                continue
+            suo = _forma(parente.cognomi, attestazione)
+            if suo:
+                dai_parenti[paleografia.forma_canonica(suo)] += peso
+    if not dai_parenti or paleografia.forma_canonica(scelta) in dai_parenti:
+        return scelta
+    candidate = [
+        forma for forma in scheda.cognomi
+        if paleografia.forma_canonica(forma) in dai_parenti
+    ]
+    if not candidate:
+        return scelta
+    return max(sorted(candidate), key=lambda f: (
+        dai_parenti[paleografia.forma_canonica(f)], scheda.cognomi[f], f
+    ))
+
+
+def senza_nome(scheda: Scheda) -> bool:
+    """La scheda non ha ne' nome ne' cognome: non e' una persona.
+
+    Nei registri capita spesso, ed e' informazione vera: «figlio di
+    genitori ignoti», «da donna che non consente di essere nominata», il
+    padre lasciato in bianco perche' nessuno lo sapeva. L'estrazione ne
+    fa comunque una riga, e da li' l'archivio ne faceva una **persona**:
+    duecentotrentadue schede senza nome, centoottantuno delle quali
+    finivano nell'albero — e siccome si somigliavano tutte (nessun nome
+    da confrontare), si univano fra loro e sposavano qualcuno.
+
+    Nell'albero di Filippo Lella se ne vedeva una: un nodo «senza nome»
+    del 1895 accanto a Teresa Desiderio, che veniva dal padre ignoto di
+    una Claudina Desiderio a cui i Lella non c'entrano niente.
+
+    La riga resta dov'e' — l'atto dice che quel padre non si sa, e
+    saperlo vale — ma non diventa un genitore ne' un coniuge.
+    """
+    return not scheda.nomi and not scheda.cognomi
 
 
 def _serie(scheda: Scheda, tipo: str, vocabolari: dict | None) -> str | None:
@@ -346,6 +453,10 @@ def _scrivi_legami(
                 continue
             genitore = esito.di_menzione.get(riferimento)
             if genitore is None or genitore == figlio:
+                continue
+            # Un genitore che l'atto non nomina non e' un genitore: vedi
+            # 'senza_nome'. Il legame non si scrive, la menzione resta.
+            if senza_nome(esito.schede[genitore]):
                 continue
             chiave = (numeri[figlio], numeri[genitore], tipo)
             dichiarazioni.setdefault(chiave, []).append(
@@ -551,6 +662,9 @@ def _scrivi_unioni(
         # raccolto la riga sbagliata, e scrivere l'unione nasconderebbe
         # l'errore invece di mostrarlo.
         prima, seconda = esito.schede[uno], esito.schede[due]
+        # Chi l'atto non nomina non sposa nessuno: vedi 'senza_nome'.
+        if senza_nome(prima) or senza_nome(seconda):
+            continue
         if prima.sesso and prima.sesso == seconda.sesso:
             esito.anomalie.append(mod.Anomalia(
                 tipo="MARITAL_ANOMALY",
@@ -574,7 +688,16 @@ def _scrivi_unioni(
         if (moglie, marito) in unioni:
             marito, moglie = moglie, marito
         chiave = (marito, moglie)
-        documentata = menzione.tipo_atto in ("matrimonio", "pubblicazione")
+        # Il matrimonio e' documentato solo dalle righe degli sposi. I
+        # genitori dello sposo, nello stesso atto, sono una coppia anche
+        # loro, ma sposata trent'anni prima: prendere l'anno di quest'atto
+        # faceva sposare Nicola Moretta, nato nel 1755, nel 1832 a
+        # settantasette anni. La loro unione la dice il figlio che si sposa.
+        documentata = (
+            menzione.tipo_atto in ("matrimonio", "pubblicazione")
+            and menzione.ruolo in RUOLI_DEGLI_SPOSI
+            and altra.ruolo in RUOLI_DEGLI_SPOSI
+        )
         precedente = unioni.get(chiave)
         if precedente is None:
             unioni[chiave] = {
@@ -626,6 +749,29 @@ def _ordina_coppia(una, altra, uno: int, due: int) -> tuple[int, int]:
 # in fondo, non una regola diversa che decide per conto suo.
 COGNOME_RARO = 3
 DOMINANZA_PATERNA = 8
+# Quanto devono somigliarsi il cognome del figlio e quello del padre perche'
+# siano la stessa parola letta in due modi: Zorzi e Torzi, Bosia e Boscia,
+# Sepe e Pepe. Allora la frequenza non conta: conta chi ha piu' righe.
+SOMIGLIANZA_DI_UNA_VARIANTE = 0.80
+
+# La lettura rara che padre e figlio condividono nello stesso atto: «Modesto
+# Sepe» e la figlia «Sepe», e il padre e' Modesto Pepe in trentotto righe.
+# Rara: meno righe di quante ne ha una famiglia vera del paese in un secolo
+# (vedi 'evidenza.RIGHE_DI_UNA_FAMIGLIA'). Vicina: piu' della meta' delle
+# lettere, perche' «Femminilli» e «Ferrara» sono due famiglie, non una
+# parola letta in due modi.
+RIGHE_DI_UNA_LETTURA = 30
+SOMIGLIANZA_DI_UNA_LETTURA = 0.50
+
+# Quanti fratelli, figli della stessa coppia, devono portare il cognome
+# della scheda del padre perche' quello del figlio diverso sia una lettura
+# sbagliata. Uno solo puo' essere lui stesso letto male; due sono la
+# famiglia.
+FRATELLI_CHE_DICONO_IL_CASATO = 2
+
+# Le righe che fanno di un atto di matrimonio il matrimonio di una coppia:
+# gli sposi, non i loro genitori (vedi '_scrivi_unioni').
+RUOLI_DEGLI_SPOSI = frozenset({"sposo", "sposa"})
 
 
 def cognomi_dal_padre(
@@ -653,14 +799,60 @@ def cognomi_dal_padre(
     un figlio naturale o un forestiero, e per questo si tocca solo quando
     la forma letta non esiste (tre volte o meno in un secolo) e quella del
     padre e' otto volte piu' attestata.
+
+    Oppure quando le due forme sono **la stessa parola** letta in due modi
+    (:data:`SOMIGLIANZA_DI_UNA_VARIANTE`) e il padre ha almeno tante righe
+    quante il figlio. Il caso: la morte n. 22 del 1813, «Domenica Zorzi,
+    figlia di Francesco Zorzi». Il padre e' Francesco Torzi, e cosi' lo
+    scrivono le sue altre righe; la figlia, con una riga sola, restava
+    Zorzi. Nell'albero padre e figlia di due casati: centoquattro figli
+    cosi', con lo stesso cognome del padre nell'atto che li lega.
     """
     frequenze = esito.corpus.frequenze_cognome
     per_chiave = {n: c for c, n in numeri.items()}
     corretti = []
 
+    # Provato e scartato: aggiungere un quarto caso, il 'casato
+    # confermato' — l'atto che li lega scrive la stessa parola per il
+    # figlio e per suo padre, due letture indipendenti nella stessa
+    # pagina — e ricondurre il figlio al casato del padre ogni volta che
+    # le due schede ne mostrano due diversi. Nasceva da trentuno legami
+    # veri: Monaco e Manes, Lorri e Lozzi, Leandro e Landea, Torzi e
+    # Corzi.
+    #
+    # Misurato: i figli segnalati sono saliti da sessantadue a
+    # ottantatre, e la classe che si voleva svuotare — «la scheda del
+    # padre porta un altro cognome» — da tredici a quaranta. Rinominare
+    # un figlio col casato del padre rompe l'accordo che quel figlio ha
+    # coi **suoi** figli, e il guaio si propaga di generazione in
+    # generazione. Il casato confermato e' frequentissimo (dodicimila
+    # righe su cinquantaduemila): usato come permesso, scavalca tutte le
+    # prudenze che questa funzione ha misurato una per una.
+
+    # I fratelli: i figli della stessa coppia, padre e madre. Quando la
+    # coppia ha altri figli che portano tutti il cognome della scheda del
+    # padre, il figlio che ne porta un altro e' letto male — anche se il
+    # cognome letto e' quello di una famiglia vera. «Carmela Femminilli,
+    # figlia di Nicolangelo Femminilli e di Custoda Pizzi»: Custoda Pizzi e'
+    # la moglie di Nicolangelo Ferrara, e i loro figli sono Ferrara.
+    figli_della_coppia: dict = {}
+    madre_di: dict = {}
+    for figlio, padre, madre in conn.execute(
+        "SELECT a.figlio, a.genitore, b.genitore FROM legami a "
+        "  JOIN legami b ON b.figlio = a.figlio "
+        " WHERE a.tipo = 'padre' AND b.tipo = 'madre'"
+    ):
+        figli_della_coppia.setdefault((padre, madre), set()).add(figlio)
+        madre_di[figlio] = madre
+    cognome_di = {
+        numero: paleografia.forma_canonica(cognome or "")
+        for numero, cognome in conn.execute("SELECT id, cognome FROM individui")
+    }
+
     for riga in conn.execute(
-        "SELECT l.figlio, f.cognome AS cognome_figlio, p.cognome AS cognome_padre, "
-        "       l.atto "
+        "SELECT l.figlio, l.genitore AS padre, f.cognome AS cognome_figlio, "
+        "       p.cognome AS cognome_padre, "
+        "       l.atto, f.menzioni AS menzioni_figlio, p.menzioni AS menzioni_padre "
         "  FROM legami l JOIN individui f ON f.id = l.figlio "
         "                JOIN individui p ON p.id = l.genitore "
         " WHERE l.tipo = 'padre' AND f.cognome IS NOT NULL AND p.cognome IS NOT NULL"
@@ -669,12 +861,34 @@ def cognomi_dal_padre(
         del_padre = paleografia.forma_canonica(riga["cognome_padre"])
         if del_figlio == del_padre:
             continue
-        quante_figlio = frequenze.get(del_figlio, 0)
-        quante_padre = frequenze.get(del_padre, 0)
-        if quante_figlio > COGNOME_RARO:
-            continue
-        if quante_padre < max(1, quante_figlio) * DOMINANZA_PATERNA:
-            continue
+        variante = (
+            paleografia.somiglianza(del_figlio, del_padre) >= SOMIGLIANZA_DI_UNA_VARIANTE
+            and (riga["menzioni_padre"] or 0) >= (riga["menzioni_figlio"] or 0)
+        )
+        # La lettura rara e vicina: «Sepe» per Pepe, «Lorri» per Lozzi,
+        # «Colle» per Colella. Il padre deve avere piu' righe del figlio e
+        # un cognome piu' attestato: la parola giusta e' la sua.
+        lettura = (
+            frequenze.get(del_figlio, 0) < RIGHE_DI_UNA_LETTURA
+            and frequenze.get(del_padre, 0) > frequenze.get(del_figlio, 0)
+            and paleografia.somiglianza(del_figlio, del_padre) > SOMIGLIANZA_DI_UNA_LETTURA
+            and (riga["menzioni_padre"] or 0) > (riga["menzioni_figlio"] or 0)
+        )
+        fratelli = figli_della_coppia.get(
+            (riga["padre"], madre_di.get(riga["figlio"])), set()
+        ) - {riga["figlio"]}
+        famiglia = (
+            (riga["menzioni_figlio"] or 0) <= risoluzione.MENZIONI_DI_UN_FRAMMENTO
+            and sum(1 for f in fratelli if cognome_di.get(f) == del_padre)
+            >= FRATELLI_CHE_DICONO_IL_CASATO
+        )
+        if not (variante or lettura or famiglia):
+            quante_figlio = frequenze.get(del_figlio, 0)
+            quante_padre = frequenze.get(del_padre, 0)
+            if quante_figlio > COGNOME_RARO:
+                continue
+            if quante_padre < max(1, quante_figlio) * DOMINANZA_PATERNA:
+                continue
         corretti.append((riga["figlio"], riga["cognome_figlio"],
                          riga["cognome_padre"], riga["atto"]))
 

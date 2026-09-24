@@ -103,6 +103,11 @@ CREATE TABLE legami (
     genitore    INTEGER NOT NULL REFERENCES individui(id),
     tipo        TEXT NOT NULL,
     atto        INTEGER REFERENCES atti(id),
+    -- Le stesse due colonne della fase 6b: l'applicazione dell'albero
+    -- serve tutti e due i motori, e un legame dedotto va disegnato
+    -- tratteggiato qualunque sia il motore che l'ha scritto.
+    confidenza  REAL NOT NULL DEFAULT 1.0,
+    stato       TEXT NOT NULL DEFAULT 'confermato',
     PRIMARY KEY (figlio, genitore, tipo)
 );
 

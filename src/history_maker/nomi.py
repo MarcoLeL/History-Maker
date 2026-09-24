@@ -146,6 +146,12 @@ class Eta:
     anni: float
     approssimata: bool
     letta: str
+    # L'eta' e' un **limite inferiore**, non una misura: e' cosi' per la
+    # formula 'maggiore di eta'', che dice soltanto «ha l'eta' per
+    # firmare». Chi la usa per ricavare un anno di nascita deve saperlo,
+    # perche' un maggiorenne di sessant'anni e' maggiorenne come uno di
+    # ventuno — e trattarla come una misura inventa una data.
+    minima: bool = False
 
     @property
     def anno_nascita(self) -> int:
@@ -199,6 +205,12 @@ def analizza_eta(testo: str | None) -> Eta | None:
     for schema, _ in _UNITA_TEMPO:
         ripulito = schema.sub(" ", ripulito)
     ripulito = _senza_accenti(ripulito).casefold()
+    # L'apostrofo fra due lettere unisce, non separa: nei registri
+    # dell'Ottocento «vent'uno» e' ventuno, «cinquant'otto» cinquantotto.
+    # Trattandolo come tutti gli altri segni, «vent'uno» diventava
+    # «vent uno» e l'eta' letta era **uno**: il testimone del matrimonio
+    # n. 1 del 1811 risultava un bambino di un anno.
+    ripulito = re.sub(r"(?<=[a-z])'(?=[a-z])", "", ripulito)
     ripulito = re.sub(r"[^a-z0-9 ]+", " ", ripulito)
     ripulito = " ".join(ripulito.split())
 
@@ -207,7 +219,7 @@ def analizza_eta(testo: str | None) -> Eta | None:
         if _MINORENNE.search(grezzo):
             return None
         if _MAGGIORENNE.search(grezzo):
-            return Eta(float(ETA_MAGGIORE), True, grezzo)
+            return Eta(float(ETA_MAGGIORE), True, grezzo, minima=True)
         return None
 
     for pezzo in ripulito.split():
@@ -219,7 +231,7 @@ def analizza_eta(testo: str | None) -> Eta | None:
     letto = _numero_da_parole(ripulito)
     if letto is None:
         if _MAGGIORENNE.search(grezzo):
-            return Eta(float(ETA_MAGGIORE), True, grezzo)
+            return Eta(float(ETA_MAGGIORE), True, grezzo, minima=True)
         return None
 
     numero, esatto = letto
@@ -655,6 +667,21 @@ class Genere:
             return None
         return _genere_dalla_desinenza(chiave)
 
+    @staticmethod
+    def probabile_maschile(nome: str | None) -> bool:
+        """Il nome, per come e' fatto, e' di un uomo.
+
+        Guarda la sola desinenza del primo nome, senza corpus: serve dove
+        il corpus non c'e' ancora o non serve — a decidere, per esempio,
+        se il dichiarante di una nascita puo' essere il padre o e' la
+        levatrice. E' una domanda a cui la desinenza risponde bene,
+        perche' ``MASCHILI_IN_A`` tiene gia' le eccezioni vere.
+        """
+        parti = parti_del_nome(nome)
+        if not parti:
+            return False
+        return _genere_dalla_desinenza(_chiave(parti[0])) == "M"
+
     def di(self, nome: str | None) -> str | None:
         """Il sesso di un nome intero, anche composto.
 
@@ -662,11 +689,30 @@ class Genere:
         due parti dicono cose diverse: si guarda la **prima**, che e' il
         nome che la persona porta, e le altre valgono solo se la prima
         tace.
+
+        E quando la prima e' ambigua nel corpus, prima di passare la
+        parola alle altre si guarda la sua **desinenza**. Il caso che lo
+        impone e' 'Nicola': come parola vale 534 volte da uomo e 103 da
+        donna — perche' 'Maria Nicola' e' un nome femminile e il
+        conteggio non sa in che posizione stia — quindi resta sotto la
+        soglia e non dice niente. A quel punto parlava 'Maria', e
+        **Nicola Maria Lella, nato nel 1885, risultava una bambina**:
+        con lui spariva il primo maschio di Domenicantonio Lella, cioe'
+        l'unico indizio che attaccasse suo padre all'albero.
+
+        In prima posizione la desinenza non e' un ripiego debole: e' il
+        nome che quella persona porta, e ``MASCHILI_IN_A`` tiene gia' le
+        eccezioni vere dell'italiano. In seconda posizione no — li'
+        'Maria' e' un voto, non un sesso.
         """
-        for parte in parti_del_nome(nome):
+        for indice, parte in enumerate(parti_del_nome(nome)):
             sesso = self.della_forma(parte)
             if sesso:
                 return sesso
+            if indice == 0:
+                dalla_desinenza = _genere_dalla_desinenza(_chiave(parte))
+                if dalla_desinenza:
+                    return dalla_desinenza
         return None
 
 
@@ -725,10 +771,17 @@ def somiglianza_nome(uno: str | None, altro: str | None) -> float:
     # Il punteggio e' quello della parte che si ritrova PEGGIO: basta un
     # elemento estraneo — la 'Teresa' di 'Maria Teresa' — perche' i due
     # nomi non siano lo stesso nome, per quanto il resto combaci.
-    return min(
+    res = min(
         max(paleografia.somiglianza(parte, altra) for altra in lungo)
         for parte in corto
     )
+
+    # Fallback per nomi composti concatenati (es. 'Domenico Antonio' vs 'Domenicantonio')
+    concatenato_uno = "".join(parti_uno)
+    concatenato_altro = "".join(parti_altro)
+    somiglianza_concatenata = paleografia.somiglianza(concatenato_uno, concatenato_altro)
+
+    return max(res, somiglianza_concatenata)
 
 
 # I nomi di battesimo si correggono con la mano piu' leggera dei cognomi,
@@ -821,7 +874,10 @@ def correzioni_dei_nomi(
     return correzioni, proposte
 
 
-def applica_correzioni(nome: str | None, correzioni: dict[str, str]) -> str | None:
+def applica_correzioni(
+    nome: str | None, correzioni: dict[str, str],
+    ruolo: str | None = None, genere: "Genere | None" = None,
+) -> str | None:
     """Riscrive un nome sostituendo le sue parti corrette, e nient'altro.
 
     Le particelle e la punteggiatura restano dove sono: qui si cambia una
@@ -829,8 +885,42 @@ def applica_correzioni(nome: str | None, correzioni: dict[str, str]) -> str | No
 
     >>> applica_correzioni("Maria Giyseppa", {"Giyseppa": "Giuseppa"})
     'Maria Giuseppa'
+
+    Con ``ruolo`` e ``genere``, **una correzione non puo' cambiare il
+    sesso di chi la porta.** I nomi che finiscono in *-e* non hanno un
+    sesso nella desinenza, quindi entrano in tutti e due i confronti di
+    :func:`correzioni_dei_nomi` — ed e' li' che si apre il varco:
+    ``Innocente``, scritto una volta sola e sempre come padre, veniva
+    ricondotto a ``Innocenta``, che in paese hanno nove donne. Il padre
+    di Maria Lella diventava cosi' una donna di nome Innocenta, e chi
+    guarda l'albero se ne accorge subito — perche' e' assurdo.
+
+    Il ruolo, quando c'e', e' piu' forte di qualunque frequenza: un padre
+    e' un uomo perche' lo dice l'atto, non perche' lo dica una statistica.
+
+    >>> genere = Genere(maschili=Counter(), femminili=Counter({'innocenta': 9}))
+    >>> applica_correzioni("Innocente", {"Innocente": "Innocenta"},
+    ...                    ruolo="padre", genere=genere)
+    'Innocente'
     """
     if not nome or not correzioni:
         return nome
+    atteso = None
+    if ruolo is not None:
+        chiave = (ruolo or "").strip().casefold()
+        if chiave in RUOLI_MASCHILI:
+            atteso = "M"
+        elif chiave in RUOLI_FEMMINILI:
+            atteso = "F"
+
+    def corretto(pezzo: str) -> str:
+        nuovo = correzioni.get(pezzo)
+        if nuovo is None:
+            return pezzo
+        if atteso is not None and genere is not None:
+            if genere.della_forma(nuovo) not in (None, atteso):
+                return pezzo
+        return nuovo
+
     pezzi = _SEPARA_NOME.split(nome.strip())
-    return " ".join(correzioni.get(pezzo, pezzo) for pezzo in pezzi if pezzo)
+    return " ".join(corretto(pezzo) for pezzo in pezzi if pezzo)

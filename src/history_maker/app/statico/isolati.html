@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le schede appese a un filo</title>
+<!-- Come 'correzioni.html', non si carica 'stile.css': quello e' il
+     foglio dell'albero, che vive a tutto schermo e impedisce di
+     scorrere un elenco lungo. -->
+<style>
+  :root { --grano: #f6f3ec; --inchiostro: #221d17; --tenue: #6d6357;
+          --riga: #ded5c6; --buono: #2c6e4a; --dubbio: #9a5b12;
+          --allarme: #9a2020; }
+  html, body { height: auto; overflow: visible; }
+  body { margin: 0; background: var(--grano); color: var(--inchiostro);
+         font: 15px/1.55 Georgia, "Times New Roman", serif; }
+  main { display: block; padding: 8px 28px 60px; }
+  header { padding: 22px 28px 14px; border-bottom: 1px solid var(--riga); }
+  h1 { margin: 0 0 6px; font-size: 22px; font-weight: normal; }
+  .conti { color: var(--tenue); font-size: 14px; }
+  .conti b { color: var(--inchiostro); font-weight: normal; }
+  nav { padding: 12px 28px; border-bottom: 1px solid var(--riga);
+        display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; font-size: 13px; padding: 5px 12px; cursor: pointer;
+           background: #fff; color: var(--inchiostro);
+           border: 1px solid var(--riga); border-radius: 3px; }
+  button[aria-pressed="true"] { background: var(--inchiostro); color: var(--grano);
+                                border-color: var(--inchiostro); }
+  input[type=search] { font: inherit; font-size: 13px; padding: 5px 10px;
+                       border: 1px solid var(--riga); border-radius: 3px;
+                       background: #fff; min-width: 220px; }
+  article { border-bottom: 1px solid var(--riga); padding: 16px 0; }
+  .capo { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .chi { font-size: 17px; font-weight: bold; }
+  .anni { color: var(--tenue); font-size: 14px; }
+  .etichetta { font-size: 12px; padding: 2px 8px; border-radius: 10px;
+               border: 1px solid var(--riga); color: var(--tenue); background: #fff; }
+  .etichetta.gemello { color: #fff; background: var(--allarme);
+                       border-color: var(--allarme); }
+  .etichetta.sola { color: var(--buono); border-color: var(--buono); }
+  .filo { margin-top: 8px; font-size: 14px; }
+  .filo b { font-weight: normal; }
+  .dove { color: var(--tenue); font-size: 13px; margin-top: 6px; }
+  .gemelli { margin-top: 8px; padding: 8px 12px; background: #fffdf8;
+             border-left: 3px solid var(--allarme); font-size: 14px; }
+  .apri { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+  a.bottone { font-size: 13px; padding: 5px 12px; background: #fff;
+              color: var(--inchiostro); border: 1px solid var(--riga);
+              border-radius: 3px; text-decoration: none; }
+  a.bottone:hover { border-color: var(--inchiostro); }
+  .vuoto { color: var(--tenue); padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Le schede appese a un filo</h1>
+  <div class="conti" id="conti">caricamento…</div>
+</header>
+
+<nav>
+  <button data-filtro="tutte" aria-pressed="true">tutte</button>
+  <button data-filtro="gemello" aria-pressed="false">hanno un omonimo</button>
+  <button data-filtro="sola" aria-pressed="false">nessun omonimo</button>
+  <button data-filtro="figlio" aria-pressed="false">solo figli</button>
+  <button data-filtro="genitore" aria-pressed="false">solo genitori</button>
+  <button data-filtro="coniuge" aria-pressed="false">solo coniugi</button>
+  <button data-legami="1" aria-pressed="true">un legame</button>
+  <button data-legami="0" aria-pressed="false">staccate del tutto</button>
+  <input type="search" id="cerca" placeholder="cerca un nome…">
+  <span class="conti" id="mostrate"></span>
+</nav>
+
+<main id="elenco"><p class="vuoto">caricamento…</p></main>
+
+<script>
+let TUTTE = [], FILTRO = "tutte", LEGAMI = 1, CERCA = "";
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g,
+    m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[m]));
+}
+
+function passa(s) {
+  if (CERCA && !s.nome.toLowerCase().includes(CERCA)) return false;
+  if (FILTRO === "tutte") return true;
+  if (FILTRO === "gemello") return s.gemello_massimo > 0;
+  if (FILTRO === "sola") return s.gemello_massimo === 0;
+  return (s.attacchi[0] || {}).verso === FILTRO + " di";
+}
+
+function scheda(s) {
+  const art = document.createElement("article");
+  const filo = s.attacchi.map(a =>
+    `<b>${esc(a.verso)}</b> <a class="bottone" href="/#${a.id}" target="_blank"
+       rel="noopener">${esc(a.chi)}</a> <span class="anni">(${a.menzioni} menzioni${
+       a.come ? " · " + esc(a.come) : ""})</span>`).join(" ");
+  // Una scheda con settantasette menzioni ne elencherebbe settantasette e
+  // sommergerebbe tutto il resto: bastano le prime, il resto e' un conto.
+  const MOSTRA = 8;
+  const atti = s.atti.slice(0, MOSTRA).map(a =>
+    `${a.anno} ${esc(a.tipo)} n.${esc(a.numero)} <i>${esc(a.ruolo)}</i>`).join(" · ")
+    + (s.atti.length > MOSTRA ? ` <b>… e altri ${s.atti.length - MOSTRA}</b>` : "");
+  const mestieri = (s.professioni || "").split(" | ").filter(Boolean);
+
+  art.innerHTML = `
+    <div class="capo">
+      <span class="chi">${esc(s.nome) || "(senza nome)"}</span>
+      <span class="anni">${s.anno_primo || "?"}–${s.anno_ultimo || "?"} ·
+        ${s.menzioni} menzion${s.menzioni === 1 ? "e" : "i"}</span>
+      ${s.gemello_massimo > 0
+        ? `<span class="etichetta gemello">un omonimo con ${s.gemello_massimo} menzioni</span>`
+        : '<span class="etichetta sola">nessun omonimo</span>'}
+      ${mestieri.length ? `<span class="etichetta">${esc(mestieri[0])}${
+          mestieri.length > 1 ? ` +${mestieri.length - 1}` : ""}</span>` : ""}
+    </div>
+    ${filo ? `<div class="filo">${filo}</div>`
+           : '<div class="filo"><b>nessun legame</b> — non compare in nessun albero</div>'}
+    ${atti ? `<div class="dove">${atti}</div>` : ""}
+    ${s.gemelli.length ? `<div class="gemelli">Stesso nome e cognome: ` +
+        s.gemelli.map(g =>
+          `<a class="bottone" href="/#${g.id}" target="_blank" rel="noopener"
+             >${g.menzioni} menzioni, ${g.anno_primo || "?"}–${g.anno_ultimo || "?"}</a>`
+        ).join(" ") + `</div>` : ""}
+    <div class="apri">
+      <a class="bottone" href="/#${s.id}" target="_blank" rel="noopener"
+        >apri «${esc(s.nome)}» nell'albero</a>
+    </div>`;
+  return art;
+}
+
+function disegna() {
+  const elenco = document.getElementById("elenco");
+  elenco.textContent = "";
+  const scelte = TUTTE.filter(passa);
+  document.getElementById("mostrate").textContent = `${scelte.length} mostrate`;
+  if (!scelte.length) {
+    elenco.innerHTML = '<p class="vuoto">Nessuna scheda con questo filtro.</p>';
+    return;
+  }
+  const pezzo = document.createDocumentFragment();
+  scelte.forEach(s => pezzo.appendChild(scheda(s)));
+  elenco.appendChild(pezzo);
+}
+
+function carica() {
+  document.getElementById("elenco").innerHTML = '<p class="vuoto">caricamento…</p>';
+  fetch(`/api/isolati?legami=${LEGAMI}`).then(r => r.json()).then(d => {
+    TUTTE = d.schede || [];
+    const r = d.riassunto || {};
+    document.getElementById("conti").innerHTML =
+      `<b>${r.individui || 0}</b> schede nell'albero · <b>${r.un_filo || 0}</b> ` +
+      `appese a un legame solo · <b>${r.staccate || 0}</b> senza nessun legame · ` +
+      `${r.due || 0} con due · ${r.tre_o_piu || 0} con tre o piu'`;
+    disegna();
+  }).catch(() => {
+    document.getElementById("elenco").innerHTML =
+      '<p class="vuoto">Non sono riuscito a leggere l\'elenco.</p>';
+  });
+}
+
+document.querySelectorAll("nav button[data-filtro]").forEach(b => {
+  b.addEventListener("click", () => {
+    FILTRO = b.dataset.filtro;
+    document.querySelectorAll("nav button[data-filtro]").forEach(
+      x => x.setAttribute("aria-pressed", String(x === b)));
+    disegna();
+  });
+});
+document.querySelectorAll("nav button[data-legami]").forEach(b => {
+  b.addEventListener("click", () => {
+    LEGAMI = Number(b.dataset.legami);
+    document.querySelectorAll("nav button[data-legami]").forEach(
+      x => x.setAttribute("aria-pressed", String(x === b)));
+    carica();
+  });
+});
+document.getElementById("cerca").addEventListener("input", e => {
+  CERCA = e.target.value.trim().toLowerCase();
+  disegna();
+});
+
+carica();
+</script>
+</body>
+</html>

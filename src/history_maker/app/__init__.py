@@ -32,7 +32,7 @@ from pathlib import Path
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, unquote, urlparse
 
-from history_maker import albero
+from history_maker import albero, isolati, revisione_correzioni
 from history_maker.config import Config
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,10 @@ class Gestore(SimpleHTTPRequestHandler):
 
         if percorso == "/":
             self.path = "/index.html"
+        if percorso == "/correzioni":
+            self.path = "/correzioni.html"
+        if percorso == "/isolati":
+            self.path = "/isolati.html"
         return super().do_GET()
 
     # -- le rotte ---------------------------------------------------------
@@ -84,6 +88,20 @@ class Gestore(SimpleHTTPRequestHandler):
         if rotta == "cerca":
             testo = (parametri.get("q") or [""])[0]
             return self._json(albero.cerca(self.conn, testo))
+
+        if rotta == "isolati":
+            quanti = int((parametri.get("legami") or ["1"])[0])
+            return self._json({
+                "riassunto": isolati.riassunto(self.conn),
+                "schede": isolati.elenco(self.conn, quanti),
+            })
+
+        if rotta == "correzioni":
+            elenco = revisione_correzioni.elenco(self.conn)
+            return self._json({
+                "riassunto": revisione_correzioni.riassunto(elenco),
+                "correzioni": elenco,
+            })
 
         if rotta.startswith("persona/"):
             scheda = albero.scheda(self.conn, int(rotta.split("/")[1]))

@@ -452,7 +452,7 @@ def punteggio(persona: Persona, menzione: Menzione, chiavi: ChiaviFamiliari) -> 
     # menzione: una persona con quattrocento atti ha comunque due o tre
     # grafie del nome, e sono quelle a fare testo.
     if not menzione.nome:
-        nome_migliore = SOGLIA_NOME if persona.nomi else 1.0
+        nome_migliore = 1.0 if persona.nomi else 1.0
     elif menzione.chiave_nome in persona._nomi_canonici:
         nome_migliore = 1.0
     else:
@@ -825,6 +825,8 @@ def consolida(
             continue
         if _accosta_per_identita(persone, chiavi):
             continue
+        if _unifica_sciolte(persone, chiavi):
+            continue
         if _assorbi_sciolte(persone, chiavi):
             continue
         # Per ultima la ricostituzione delle famiglie, che e' la regola
@@ -924,7 +926,7 @@ def _accosta_per_identita(persone: list[Persona], chiavi: ChiaviFamiliari) -> bo
             for seconda in gruppo:
                 if seconda is prima or not seconda.menzioni:
                     continue
-                if not _stesso_parente(prima, seconda):
+                if not (_stesso_parente(prima, seconda) or _stesso_genitore_e_nome(prima, seconda)):
                     continue
                 # L'eta' dichiarata e' il dato piu' debole del registro:
                 # la si dice a voce e la si arrotonda. Quando dall'altra
@@ -941,6 +943,22 @@ def _accosta_per_identita(persone: list[Persona], chiavi: ChiaviFamiliari) -> bo
                 _fondi(prima, seconda, chiavi, incerta=True)
                 cambiato = True
     return cambiato
+
+
+def _stesso_genitore_e_nome(prima: Persona, seconda: Persona) -> bool:
+    """Se condividono almeno un genitore e hanno lo stesso nome."""
+    if not prima.menzioni or not seconda.menzioni:
+        return False
+
+    # Devono avere lo stesso nome (almeno una forma canonica in comune)
+    if not (prima._nomi_canonici & seconda._nomi_canonici):
+        return False
+
+    # Devono condividere almeno un genitore
+    if (prima.padri_id & seconda.padri_id) or (prima.madri_id & seconda.madri_id):
+        return True
+
+    return False
 
 
 def _stesso_parente(prima: Persona, seconda: Persona) -> bool:
@@ -961,6 +979,50 @@ def _stesso_parente(prima: Persona, seconda: Persona) -> bool:
     if (prima.padri_id & seconda.padri_id) and (prima.madri_id & seconda.madri_id):
         return True
     return False
+
+
+def _unifica_sciolte(persone: list[Persona], chiavi: ChiaviFamiliari) -> bool:
+    """Riunisce persone sciolte (senza parentele) che sono compatibili fra loro.
+
+    Senza questo, due testimoni 'Vincenzo Colella, 40 anni' rimangono separati
+    perche' nessuno dei due e' il candidato unico dell'altro (sono troppi
+    candidati compatibili). Ma se sono l'unico candidato l'uno dell'altro
+    dentro il gruppo delle sciolte, allora sono la stessa persona.
+    """
+    cambiato = False
+    vive = [p for p in persone if p.menzioni]
+
+    # Identifica le persone sciolte
+    sciolte = [p for p in vive if not _ha_parentele(p) and p.nascita_certa is None]
+    if len(sciolte) < 2:
+        return False
+
+    # Raggruppa per nome e cognome canonico
+    bacini: dict[tuple[str, str], list[Persona]] = defaultdict(list)
+    for p in sciolte:
+        for nome in p._nomi_canonici:
+            for cognome in p._cognomi_canonici:
+                bacini[(cognome, nome)].append(p)
+
+    for gruppo in bacini.values():
+        if len(gruppo) < 2:
+            continue
+
+        # Per ogni coppia, verifica se sono l'unico candidato l'uno dell'altro
+        # all'interno di questo bacino di sciolte.
+        for i, prima in enumerate(gruppo):
+            if not prima.menzioni: continue
+            for j, seconda in enumerate(gruppo):
+                if i == j or not seconda.menzioni: continue
+
+                if _senza_contraddizioni(prima, seconda) and _eta_concorde(prima, seconda, TOLLERANZA_CONSOLIDAMENTO):
+                    # In un gruppo di sciolte, se sono compatibili e non ci sono altri
+                    # candidati migliori, li uniamo.
+                    _fondi(prima, seconda, chiavi, incerta=True)
+                    cambiato = True
+                    break
+            if cambiato: break
+    return cambiato
 
 
 def _assorbi_sciolte(persone: list[Persona], chiavi: ChiaviFamiliari) -> bool:

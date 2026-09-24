@@ -243,3 +243,107 @@ def test_le_soglie_sono_le_stesse_di_quelle_che_la_fase_7_conta():
 
     assert coerenza.qualita is qualita
     assert famiglie.qualita is qualita
+
+
+# --- i controlli di qualita' non contano come errori le cose vere ------------
+
+def _unione(conn, id, marito, moglie, anno):
+    conn.execute(
+        "INSERT INTO unioni (id, marito, moglie, anno, origine) VALUES (?,?,?,?,?)",
+        (id, marito, moglie, anno, "matrimonio"),
+    )
+
+
+def _legame(conn, figlio, genitore, tipo):
+    conn.execute(
+        "INSERT INTO legami (figlio, genitore, tipo) VALUES (?,?,?)",
+        (figlio, genitore, tipo),
+    )
+
+
+def test_la_vedovanza_nello_stesso_anno_delle_nuove_nozze_non_e_un_doppione(conn):
+    # Agostino Pelliccia: Maria Marianacci muore il 5 maggio 1900, lui
+    # sposa Maria Irene Dionisia Marianacci il 5 luglio.
+    individuo(conn, 1, "Agostino", "Pelliccia", sesso="M")
+    individuo(conn, 2, "Maria", "Marianacci", sesso="F", anno_morte=1900)
+    individuo(conn, 3, "Maria Irene", "Marianacci", sesso="F")
+    _unione(conn, 1, 1, 2, 1886)
+    _unione(conn, 2, 1, 3, 1900)
+    assert qualita.coniugi_duplicati(conn) == []
+    # Senza la morte restano due mogli con lo stesso nome da guardare.
+    conn.execute("UPDATE individui SET anno_morte = NULL WHERE id = 2")
+    assert len(qualita.coniugi_duplicati(conn)) == 1
+
+
+def test_due_figli_con_nomi_di_battesimo_diversi_non_sono_omonimi(conn):
+    # I figli di Rosario Franchella: la scheda li chiama tutti e due
+    # Antonio, ma sono Francesco Antonio (1845) e Domenico Antonio (1847).
+    individuo(conn, 1, "Rosario", "Franchella", sesso="M")
+    individuo(conn, 2, "Rosa", "Spalletta", sesso="F")
+    individuo(conn, 3, "Antonio", "Franchella", anno_nascita=1845)
+    individuo(conn, 4, "Antonio", "Franchella", anno_nascita=1847)
+    for figlio in (3, 4):
+        _legame(conn, figlio, 1, "padre")
+        _legame(conn, figlio, 2, "madre")
+    atto(conn, 10, anno=1845)
+    atto(conn, 11, anno=1847)
+    atto(conn, 12, tipo="morte", anno=1899)
+    persona(conn, 100, 10, "neonato", "Francesco Antonio", "Franchella")
+    persona(conn, 101, 11, "neonato", "Domenico Antonio", "Franchella")
+    persona(conn, 102, 12, "dichiarante", "Antonio", "Franchella")
+    for menzione, chi in ((100, 3), (101, 4), (102, 3)):
+        conn.execute("INSERT INTO menzioni (persona, individuo) VALUES (?,?)", (menzione, chi))
+    assert qualita.figli_omonimi_vivi(conn) == []
+    # Con lo stesso nome all'atto il dubbio resta.
+    conn.execute("UPDATE persone SET nome = 'Francesco Antonio' WHERE id = 101")
+    assert len(qualita.figli_omonimi_vivi(conn)) == 1
+
+
+def test_due_madri_con_lo_stesso_nome_e_cognomi_diversi_non_sono_una_coppia(conn):
+    # Le due Clementina Petta del 1881: figlie di Luigi e Stella Colella,
+    # e di Arcangelo e Stella Pelliccia. Due cugine, non una scheda spezzata.
+    individuo(conn, 1, "Luigi", "Petta")
+    individuo(conn, 2, "Stella", "Colella")
+    individuo(conn, 3, "Arcangelo", "Petta")
+    individuo(conn, 4, "Stella", "Pelliccia")
+    individuo(conn, 5, "Clementina", "Petta", anno_nascita=1881, nascita_origine="certa")
+    individuo(conn, 6, "Clementina", "Petta", anno_nascita=1881, nascita_origine="certa")
+    _legame(conn, 5, 1, "padre")
+    _legame(conn, 5, 2, "madre")
+    _legame(conn, 6, 3, "padre")
+    _legame(conn, 6, 4, "madre")
+    assert qualita.omonimi_con_la_stessa_nascita(conn) == []
+    conn.execute("UPDATE individui SET cognome = 'Colella' WHERE id = 4")
+    assert len(qualita.omonimi_con_la_stessa_nascita(conn)) == 1
+
+
+def test_due_mariti_con_casati_ben_attestati_non_sono_una_coppia_gemella(conn):
+    # Ferdinando Lozzi, sarto, e Ferdinando Torzi, contadino, sposati a due
+    # Maria Marianacci: i nomi si somigliano, ma ciascuno ha il suo casato
+    # scritto in tre atti e mai quello dell'altro. Sono due famiglie.
+    conn.execute(
+        "CREATE TABLE fatti (id INTEGER PRIMARY KEY, individuo INTEGER, tipo TEXT, "
+        "grezzo TEXT, normalizzato TEXT, interpretato TEXT)")
+    individuo(conn, 1, "Ferdinando", "Lozzi", sesso="M")
+    individuo(conn, 2, "Maria", "Marianacci", sesso="F")
+    individuo(conn, 3, "Ferdinando", "Torzi", sesso="M")
+    individuo(conn, 4, "Maria Giustina", "Marianacci", sesso="F")
+    individuo(conn, 5, "Maria Rosa", "Lozzi", anno_nascita=1859)
+    individuo(conn, 6, "Maria Teresa", "Torzi", anno_nascita=1867)
+    for figlio, padre, madre in ((5, 1, 2), (6, 3, 4)):
+        _legame(conn, figlio, padre, "padre")
+        _legame(conn, figlio, madre, "madre")
+
+    def letture(chi, cognome, quante):
+        for _ in range(quante):
+            conn.execute(
+                "INSERT INTO fatti (individuo, tipo, grezzo, normalizzato) "
+                "VALUES (?, 'cognome', ?, ?)", (chi, cognome, cognome.lower()))
+
+    letture(1, "Lozzi", 1)
+    letture(3, "Torzi", 1)
+    # Una lettura per parte non basta: potrebbe essere un solo errore.
+    assert len(qualita.coppie_gemelle(conn)) == 1
+    letture(1, "Lozzi", 2)
+    letture(3, "Torzi", 2)
+    assert qualita.coppie_gemelle(conn) == []

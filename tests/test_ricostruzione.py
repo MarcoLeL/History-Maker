@@ -88,6 +88,20 @@ def nascita(anno, figlio, padre, madre, dati_padre=None, dati_madre=None):
             "persone": persone}
 
 
+def matrimonio(anno, sposo, eta_sposo, genitori_sposo, sposa, eta_sposa, genitori_sposa):
+    """Un atto di matrimonio: gli sposi con la loro eta', e i genitori di ciascuno."""
+    persone = [
+        {"ruolo": "sposo", "nome": sposo[0], "cognome": sposo[1], "eta": eta_sposo},
+        {"ruolo": "padre", "nome": genitori_sposo[0][0], "cognome": genitori_sposo[0][1]},
+        {"ruolo": "madre", "nome": genitori_sposo[1][0], "cognome": genitori_sposo[1][1]},
+        {"ruolo": "sposa", "nome": sposa[0], "cognome": sposa[1], "eta": eta_sposa},
+        {"ruolo": "padre", "nome": genitori_sposa[0][0], "cognome": genitori_sposa[0][1]},
+        {"ruolo": "madre", "nome": genitori_sposa[1][0], "cognome": genitori_sposa[1][1]},
+    ]
+    return {"tipo": "matrimonio", "anno": anno, "data": f"{anno}-06-01",
+            "persone": persone}
+
+
 # Il vocabolario del paese. Comprende tutti i nomi e i cognomi che i casi
 # usano, e serve a una cosa sola: dare loro una **frequenza realistica**.
 #
@@ -501,6 +515,23 @@ class TestEvidenza:
         altra.nascite_certe = [1824]
         assert evidenza.veti(una, altra) is not None
 
+    def test_la_riga_doppia_non_e_bloccata_dal_patronimico(self):
+        """Vincenzo Pannunzio aveva due mogli, e la moglie due mariti.
+
+        Nella nascita del 1858 n. 36 il dichiarante e' «Vincenzo Pannunzio
+        figlio di Giudeto», e la riga del «padre» e' la stessa persona
+        scritta due volte: 'padre_che_e_il_nonno' la riconosce e le lascia
+        come patronimico il nome del nonno letto su quella pagina. Nel resto
+        dell'archivio il nonno e' «Diodato», e le due letture restano sotto la
+        soglia che separa due padri. Per due schede qualsiasi e' giusto
+        fermarsi; per la riga doppia no, e chi la rimette al suo posto lo dice.
+        """
+        una, altra = Scheda(chiave=1), Scheda(chiave=2)
+        una.patronimici = {"dodato"}
+        altra.patronimici = {"giudeto"}
+        assert evidenza.veti(una, altra) is not None, "due schede qualsiasi: due padri"
+        assert evidenza.veti(una, altra, patronimici=False) is None, "la riga doppia: una persona"
+
     def test_il_nome_da_solo_non_basta_mai(self):
         """Due omonimi senza altra evidenza restano due persone.
 
@@ -638,6 +669,38 @@ class TestIdentita:
         ])
         neonati = schede_di_prova(esito, prima, ruolo="neonato")
         assert len(neonati) == 2
+
+    def test_la_sorella_non_si_prende_il_fratello_sposo(self):
+        """Maria Teresa Ferrara, nata nel 1860, e il fratello Felice Maria, sposo nel 1878.
+
+        Nel primo giro i nomi dei genitori, uguali, valevano +5,2 e la
+        bambina finiva nella scheda dello sposo: una scheda sola, maschio,
+        con dentro una neonata. Gli stessi genitori dicono «fratelli o la
+        stessa persona»; senza lo stesso nome di battesimo, fratelli.
+        """
+        genitori = (("Giuseppe Nicola", "Ferrara"), ("Maria Nicola", "Ottaviano"))
+        esito, prima = in_un_paese([
+            nascita(1860, ("Maria Teresa", "Ferrara"), *genitori),
+            matrimonio(1878, ("Felice Maria", "Ferrara"), "venticinque", genitori,
+                       ("Giuditta", "Brandolino"), "trentatre",
+                       (("Domenicangelo", "Brandolino"), ("Giacinta", "Cicchillitti"))),
+        ])
+        neonata = schede_di_prova(esito, prima, ruolo="neonato")
+        sposo = schede_di_prova(esito, prima, ruolo="sposo")
+        assert {s.chiave for s in neonata}.isdisjoint(s.chiave for s in sposo)
+
+    def test_lo_sposo_ritrova_la_sua_nascita_con_gli_stessi_genitori(self):
+        """Il contrappeso: Felice Maria nato nel 1853 e' lo sposo del 1878."""
+        genitori = (("Giuseppe Nicola", "Ferrara"), ("Maria Nicola", "Ottaviano"))
+        esito, prima = in_un_paese([
+            nascita(1853, ("Felice Maria", "Ferrara"), *genitori),
+            matrimonio(1878, ("Felice Maria", "Ferrara"), "venticinque", genitori,
+                       ("Giuditta", "Brandolino"), "trentatre",
+                       (("Domenicangelo", "Brandolino"), ("Giacinta", "Cicchillitti"))),
+        ])
+        neonato = schede_di_prova(esito, prima, ruolo="neonato")
+        sposo = schede_di_prova(esito, prima, ruolo="sposo")
+        assert [s.chiave for s in neonato] == [s.chiave for s in sposo]
 
     def test_il_secondo_nome_che_compare_e_scompare(self):
         """'Maria Vincenza' e 'Maria' sono la stessa donna, se il resto torna.
@@ -1058,3 +1121,299 @@ class TestCandidati:
         ])
         nuclei = candidati.nuclei_per_nome(esito.schede, esito.di_menzione)
         assert any(chiave == ("domenico", "saba") for chiave in nuclei)
+
+
+# ---------------------------------------------------------------------------
+# Le decisioni gia' prese, riapplicate
+# ---------------------------------------------------------------------------
+
+def test_due_separazioni_sulla_stessa_scheda_fanno_tre_pezzi():
+    """Due decisioni diverse sono due tagli, non uno solo.
+
+    Il caso vero, dall'albero di Filippo Lella: dalla scheda di Rebecca
+    andava staccato l'atto di morte del 1857, che e' di sua sorella
+    Maria, e — con una decisione a parte — una menzione incerta che e' di
+    Angela Maria Lella. Finche' le due separazioni finivano nello stesso
+    pezzo, la prima unione se le portava via tutt'e due, e Angela Maria
+    si ritrovava addosso a Maria.
+    """
+    atti = [
+        nascita(1820, ("Saba", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trenta"}),
+        nascita(1822, ("Anna", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentadue"}),
+        nascita(1824, ("Rosa", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentaquattro"}),
+    ]
+    esito, prima = in_un_paese(atti)
+    padri = [prima + 1, prima + 4, prima + 7]
+    chiave = esito.di_menzione[padri[0]]
+    assert all(esito.di_menzione[p] == chiave for p in padri), (
+        "il caso ha senso solo se il calcolo li ha uniti"
+    )
+
+    conteggi = risoluzione.applica_decisioni(esito, {
+        "unire": [],
+        "separare": [(padri[0], (padri[1],)), (padri[0], (padri[2],))],
+    })
+
+    assert conteggi["separazioni imposte"] == 2
+    assert len({esito.di_menzione[p] for p in padri}) == 3, (
+        "tre decisioni distinte, tre schede: la seconda menzione staccata "
+        "non deve finire nel pezzo della prima"
+    )
+
+
+def test_una_separazione_sola_tiene_insieme_cio_che_stacca():
+    """L'altra meta': cio' che una decisione stacca insieme resta insieme."""
+    atti = [
+        nascita(1820, ("Saba", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trenta"}),
+        nascita(1822, ("Anna", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentadue"}),
+        nascita(1824, ("Rosa", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentaquattro"}),
+    ]
+    esito, prima = in_un_paese(atti)
+    padri = [prima + 1, prima + 4, prima + 7]
+
+    risoluzione.applica_decisioni(esito, {
+        "unire": [],
+        "separare": [(padri[0], (padri[1], padri[2]))],
+    })
+
+    assert esito.di_menzione[padri[1]] == esito.di_menzione[padri[2]]
+    assert esito.di_menzione[padri[0]] != esito.di_menzione[padri[1]]
+
+
+def test_la_separazione_vale_anche_se_le_righe_sono_gia_divise():
+    """Giambattista Lella e Francesco Colella, mariti di due Maria Pelliccia.
+
+    Quando le decisioni si applicano le loro righe erano gia' in due
+    schede: la separazione non tagliava niente e non lasciava segno, e i
+    passaggi di fine giro li rimettevano insieme. Ora il segno resta, e il
+    veto lo legge. Il contrappeso: senza la decisione, nessun veto.
+    """
+    from history_maker.ricostruzione import evidenza
+
+    atti = [
+        nascita(1820, ("Saba", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trenta"}),
+        nascita(1822, ("Anna", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentadue"}),
+    ]
+    esito, prima = in_un_paese(atti)
+    padri = [prima + 1, prima + 4]
+    risoluzione.applica_decisioni(esito, {"unire": [], "separare": [(padri[0], (padri[1],))]})
+    una = esito.schede[esito.di_menzione[padri[0]]]
+    altra = esito.schede[esito.di_menzione[padri[1]]]
+    assert una is not altra
+    una.separati_a_mano, altra.separati_a_mano = set(), set()
+    una.vietati, altra.vietati = set(), set()
+    assert "tiene separate" not in (evidenza.veti(una, altra, divisioni_del_calcolo=False) or "")
+
+    risoluzione.applica_decisioni(esito, {"unire": [], "separare": [(padri[0], (padri[1],))]})
+    assert "tiene separate" in (evidenza.veti(una, altra, divisioni_del_calcolo=False) or "")
+
+
+def test_la_riga_staccata_si_ricorda_solo_di_quella_che_resta():
+    """Nicoletta Troilo: il padre del 1830 staccato da un Domenico Pelliccia sbagliato.
+
+    Il pezzo staccato si ricordava di tutte le righe rimaste, anche di
+    quelle che il calcolo ci aveva messo per errore — fra cui il marito
+    vero del 1832 — e non poteva piu' tornare con loro. Ora si ricorda
+    solo della riga che la decisione tiene. Il contrappeso: da quella
+    resta lontano.
+    """
+    atti = [
+        nascita(1820, ("Saba", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trenta"}),
+        nascita(1822, ("Anna", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentadue"}),
+        nascita(1824, ("Rosa", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentaquattro"}),
+    ]
+    esito, prima = in_un_paese(atti)
+    padri = [prima + 1, prima + 4, prima + 7]
+    assert len({esito.di_menzione[p] for p in padri}) == 1, (
+        "il caso ha senso solo se il calcolo li ha uniti"
+    )
+
+    risoluzione.applica_decisioni(esito, {"unire": [], "separare": [(padri[0], (padri[1],))]})
+
+    staccata = esito.schede[esito.di_menzione[padri[1]]]
+    assert padri[0] in staccata.separati_a_mano
+    assert padri[2] not in staccata.separati_a_mano
+    assert padri[2] not in staccata.vietati
+
+
+def test_l_unione_decisa_scavalca_una_divisione_del_calcolo():
+    """Ludovico Pelliccia, padre di trentatre anni nel 1842, e il marito di Maria Di Nardo.
+
+    L'unione decisa era rifiutata perche' il calcolo, in un giro prima,
+    li aveva divisi: «una decisione presa prima le tiene separate». Ma una
+    divisione del calcolo non e' una decisione — il calcolo stesso ci puo'
+    tornare sopra — e chi ha letto la carta ne sa di piu'. Il contrappeso:
+    una separazione decisa sulla pagina resta un veto anche per le unioni.
+    """
+    atti = [
+        nascita(1820, ("Saba", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trenta"}),
+        nascita(1822, ("Anna", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentadue"}),
+    ]
+    esito, prima = in_un_paese(atti)
+    padri = [prima + 1, prima + 4]
+    risoluzione.applica_decisioni(esito, {"unire": [], "separare": [(padri[0], (padri[1],))]})
+    for padre in padri:
+        esito.schede[esito.di_menzione[padre]].separati_a_mano = set()
+    conteggi = risoluzione.applica_decisioni(esito, {"unire": [(padri[0], padri[1])], "separare": []})
+    assert conteggi["unioni imposte"] == 1
+    assert esito.di_menzione[padri[0]] == esito.di_menzione[padri[1]]
+
+    esito, prima = in_un_paese(atti)
+    padri = [prima + 1, prima + 4]
+    risoluzione.applica_decisioni(esito, {"unire": [], "separare": [(padri[0], (padri[1],))]})
+    conteggi = risoluzione.applica_decisioni(esito, {"unire": [(padri[0], padri[1])], "separare": []})
+    assert conteggi["unioni imposte rifiutate"] == 1
+    assert esito.di_menzione[padri[0]] != esito.di_menzione[padri[1]]
+
+
+def test_le_righe_staccate_insieme_possono_tornare_insieme():
+    """Amalia e Maria Amalia Marianacci, staccate insieme da Sofia Amalia.
+
+    Una stava nella scheda di Sofia, l'altra fuori. Il segno contro quella
+    di fuori si metteva prima del taglio, e il pezzo staccato lo ereditava:
+    la decisione che le diceva insieme le teneva lontane, e la loro unione
+    era rifiutata. Ora il segno si mette dopo.
+    """
+    atti = [
+        nascita(1820, ("Saba", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trenta"}),
+        nascita(1822, ("Anna", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentadue"}),
+        nascita(1824, ("Rosa", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentaquattro"}),
+    ]
+    esito, prima = in_un_paese(atti)
+    padri = [prima + 1, prima + 4, prima + 7]
+    # Il terzo padre fuori dalla scheda, senza segni: come l'Amalia di fuori.
+    risoluzione.applica_decisioni(esito, {"unire": [], "separare": [(padri[0], (padri[2],))]})
+    for padre in padri:
+        scheda = esito.schede[esito.di_menzione[padre]]
+        scheda.separati_a_mano, scheda.vietati = set(), set()
+
+    risoluzione.applica_decisioni(esito, {
+        "unire": [(padri[1], padri[2])],
+        "separare": [(padri[0], (padri[1], padri[2]))],
+    })
+
+    assert esito.di_menzione[padri[1]] == esito.di_menzione[padri[2]]
+    assert esito.di_menzione[padri[0]] != esito.di_menzione[padri[1]]
+
+
+def test_i_divieti_restano_alle_righe_che_nominano():
+    """Il dichiarante del 1825 staccato da Lorenzo Marianacci, e Loreto.
+
+    «Il terzo padre non e' il secondo», poi «il primo non e' il terzo». Con
+    i divieti tenuti per scheda il primo, restato nel pezzo del terzo, ne
+    ereditava il divieto contro il secondo, e la loro unione era rifiutata
+    anche se nessuna decisione li separa. Ora ogni riga si porta i suoi.
+    Il contrappeso: il terzo resta lontano da tutti e due.
+    """
+    atti = [
+        nascita(1820, ("Saba", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trenta"}),
+        nascita(1822, ("Anna", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentadue"}),
+        nascita(1824, ("Rosa", "Minchilli"), ("Vitaliano", "Minchilli"),
+                ("Vitaliana", "Di Laudo"), {"eta": "trentaquattro"}),
+    ]
+    esito, prima = in_un_paese(atti)
+    padri = [prima + 1, prima + 4, prima + 7]
+    assert len({esito.di_menzione[p] for p in padri}) == 1
+
+    conteggi = risoluzione.applica_decisioni(esito, {
+        "unire": [(padri[0], padri[1])],
+        "separare": [(padri[2], (padri[1],)), (padri[0], (padri[2],))],
+    })
+
+    assert conteggi["unioni imposte rifiutate"] == 0
+    assert esito.di_menzione[padri[0]] == esito.di_menzione[padri[1]]
+    assert esito.di_menzione[padri[2]] != esito.di_menzione[padri[0]]
+
+
+def test_la_morte_scritta_due_volte_non_e_due_morti():
+    """Giuseppe Petta, morto a quarantanove anni nel 1873, ha l'atto e la riga d'indice.
+
+    La pagina d'indice l'estrazione la legge come un atto con dentro nove
+    defunti in fila: la riga vale un secondo «atto di morte», e il veto
+    teneva divise le due meta' dell'uomo. Stesso anno ed eta' concordi:
+    e' un funerale solo. Il contrappeso: nello stesso anno muoiono
+    omonimi di eta' diverse — un nonno e un nipote — e quelli restano
+    due.
+    """
+    def morte(anno, eta, atto):
+        return {"tipo": "morte", "anno": anno, "data": f"{anno}-06-01", "atto": atto,
+                "persone": [{"ruolo": "defunto", "nome": "Giuseppe", "cognome": "Petta",
+                             "eta": eta}]}
+
+    esito, prima = in_un_paese([
+        morte(1873, "quarantanove", None),
+        morte(1873, "quarantanove", None),
+        morte(1873, "otto", None),
+    ])
+    chiavi = esito.corpus.chiavi()
+    righe = {m.id: m for s in esito.schede.values() for m in s.menzioni}
+    atto, indice, bambino = (Scheda.dalla_menzione(righe[prima + i], chiavi)
+                             for i in (0, 1, 2))
+
+    assert evidenza.veti(atto, indice, divisioni_del_calcolo=False) is None
+    assert "due atti di morte" in (
+        evidenza.veti(atto, bambino, divisioni_del_calcolo=False) or "")
+
+
+def test_un_genitore_senza_nome_non_entra_nell_albero():
+    """«Di genitori ignoti» e' un'informazione, non una persona.
+
+    L'atto che lascia in bianco il padre produce comunque una riga, e da
+    quella riga l'archivio ricavava un individuo: duecentotrentadue
+    schede senza nome, centoottantuno delle quali con un posto
+    nell'albero — e siccome non hanno niente da confrontare, si univano
+    fra loro e sposavano qualcuno. Nell'albero di Filippo Lella ne
+    compariva una, un nodo «senza nome» del 1895 accanto a Teresa
+    Desiderio.
+    """
+    atti = [
+        {"tipo": "nascita", "anno": 1850, "data": "1850-06-01", "persone": [
+            {"ruolo": "neonato", "nome": "Vitaliana", "cognome": "Minchilli"},
+            {"ruolo": "padre", "nome": "Bonaventura", "cognome": "Minchilli"},
+            {"ruolo": "madre", "nome": None, "cognome": None},
+        ]},
+    ]
+    esito, _prima = in_un_paese(atti)
+    senza = [
+        scheda for scheda in esito.schede.values()
+        if esecuzione.senza_nome(scheda)
+    ]
+    assert senza, "il caso ha senso solo se la riga senza nome esiste ancora"
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA_SQL)
+    conn.executescript(modello.SCHEMA_SQL)
+    numeri = esecuzione._scrivi_individui(conn, esito)
+    esecuzione._scrivi_legami(conn, esito, numeri)
+    esecuzione._scrivi_unioni(conn, esito, numeri)
+
+    ignoti = {numeri[s.chiave] for s in senza}
+    segnaposti = ",".join("?" * len(ignoti))
+    quanti = conn.execute(
+        f"SELECT COUNT(*) FROM legami WHERE genitore IN ({segnaposti})",
+        list(ignoti),
+    ).fetchone()[0]
+    assert quanti == 0
+    quante = conn.execute(
+        f"SELECT COUNT(*) FROM unioni WHERE marito IN ({segnaposti}) "
+        f"OR moglie IN ({segnaposti})", list(ignoti) * 2,
+    ).fetchone()[0]
+    assert quante == 0

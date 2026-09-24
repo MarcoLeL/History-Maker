@@ -180,6 +180,37 @@ def separa_filiazione(
 
 
 # ---------------------------------------------------------------------------
+# I titoli davanti al nome
+# ---------------------------------------------------------------------------
+
+# 'Don Felice Calidonio', 'Donna Federica', e nel matrimonio del 1877
+# «figlia di Signor Vincenzo», col casato taciuto perche' e' quello della
+# sposa. Il titolo dice il rango, non chi e' la persona: nella colonna del
+# nome diventa la prima parte del nome — e il sesso si legge da li' — in
+# quella del cognome diventa un casato che nessun altro porta.
+_TITOLI = re.compile(r"(?:donna|don|signora|signor|sigr?a?\.?)\s+", re.IGNORECASE)
+
+
+def separa_titolo(valore: str | None) -> tuple[str | None, str | None]:
+    """Toglie il titolo dalla testa del nome o del cognome, e lo rende.
+
+    >>> separa_titolo("Don Felice Calidonio")
+    ('Felice Calidonio', 'Don')
+    >>> separa_titolo("Signor Colapietra")
+    ('Colapietra', 'Signor')
+    >>> separa_titolo("Donato")
+    ('Donato', None)
+    """
+    if not valore:
+        return valore, None
+    testo = valore.strip()
+    trovato = _TITOLI.match(testo)
+    if not trovato:
+        return valore, None
+    return testo[trovato.end():].strip() or None, trovato.group(0).strip()
+
+
+# ---------------------------------------------------------------------------
 # Le apposizioni del formulario
 # ---------------------------------------------------------------------------
 
@@ -268,6 +299,10 @@ class Interprete:
         if alternative_nome or alternative_cognome:
             self.conteggi["letture alternative"] += 1
 
+        nome, titolo_del_nome = separa_titolo(nome)
+        cognome, titolo_del_cognome = separa_titolo(cognome)
+        if titolo_del_nome or titolo_del_cognome:
+            self.conteggi["titoli"] += 1
         cognome, stato = separa_apposizione(cognome)
         if stato and not menzione.stato_vitale:
             menzione.stato_vitale = stato
@@ -286,6 +321,29 @@ class Interprete:
         menzione.cognome = cognome
         menzione.alternative_nome = alternative_nome
         menzione.alternative_cognome = alternative_cognome
+        self._genitore_ignoto(menzione)
+
+    def _genitore_ignoto(self, menzione: lettura_atti.Menzione) -> None:
+        """La casella del genitore che l'atto lascia in bianco non e' una persona.
+
+        Gli atti lo dicono in chiaro — «e da padre incerto» nella nascita
+        del 1813 n. 32, «figlia delli quondam» e poi piu' niente nella
+        morte del 1812 n. 26 — e la trascrizione lascia la riga vuota. Chi
+        la contava apriva una scheda senza nome per ognuna: duecento
+        sedici righe, duecentottantasei schede vuote nell'albero, tutte
+        col nome «senza nome». Un padre che l'atto non sa non e' un padre
+        ignoto da mostrare: e' un padre che non c'e', e il posto va
+        lasciato libero.
+        """
+        if menzione.ignota:
+            # «Padre ignoto», «dalla sua unione con donna non maritata»:
+            # qui l'atto ha parlato, e la riga serve dov'e'. E' il segno
+            # che il figlio e' naturale, e la lettura delle famiglie lo
+            # usa per dare al bambino il padre che lo dichiara.
+            return
+        if menzione.ruolo in lettura_atti.GENITORI and not (menzione.nome or menzione.cognome):
+            menzione.ruolo = "altro"
+            self.conteggi["genitore che l'atto lascia in bianco"] += 1
 
     def _applica_correzioni(self, menzione: lettura_atti.Menzione) -> None:
         """Rimette nel dato cio' che l'immagine ha detto.
@@ -298,8 +356,50 @@ class Interprete:
             if valore:
                 setattr(menzione, campo, valore)
                 self.conteggi[f"{campo} corretto sull'immagine"] += 1
+        # Anche la casella puo' essere sbagliata, non solo cio' che c'e' scritto
+        # dentro. Nella promessa del 1822 n. 6 la madre dello sposo, «Celute
+        # Monno ... domiciliata col marito», e' finita nella casella della
+        # sposa accanto alla sposa vera, e Domenicangelo Moretta risultava con
+        # due mogli; nel frammento del 1833 il nome che viene da un certificato
+        # di morte del 1795 - «Luigi Bosi ... ivi morta» - faceva lo sposo di
+        # Maria Di Nardo. La correzione rimette la riga nel ruolo che l'atto le
+        # da', e la famiglia dell'atto si legge dopo: e' questo che conta.
+        # «altro» la toglie da ogni famiglia senza toglierla dall'archivio.
+        ruolo = self.corrette.get((menzione.id, "ruolo"))
+        if ruolo:
+            menzione.ruolo = ruolo.strip().casefold()
+            self.conteggi["ruolo corretto sull'immagine"] += 1
+        # Il patronimico si stacca dal nome **prima** della correzione: «Maria
+        # di Rondo», corretta in Maria Di Nardo, restava figlia di Rondo, e il
+        # veto sui padri diversi la teneva lontana da se stessa. Corretto il
+        # nome, il patronimico si rifa' da quello nuovo.
+        if self.corrette.get((menzione.id, "nome")):
+            menzione.nome, menzione.patronimico = nomi.separa_patronimico(menzione.nome)
+        # Il patronimico si legge come il nome, e si legge male come il nome.
+        # Nella nascita del 1858 n. 36 Vincenzo Pannunzio e' «figlio di
+        # Giudeto»: e' Diodato, come in tutto il resto dell'archivio, ma le due
+        # letture restano sotto la soglia che separa due padri, e la scheda che
+        # le portava tutte e due era incoerente per costruzione - rifiutata
+        # all'unione, e ridivisa se ci arrivava. La correzione lo rimette com'e'.
+        patronimico = self.corrette.get((menzione.id, "patronimico"))
+        if patronimico:
+            menzione.patronimico = patronimico.strip()
+            self.conteggi["patronimico corretto sull'immagine"] += 1
         eta = self.corrette.get((menzione.id, "eta"))
-        if eta:
+        if eta == ETA_DA_TOGLIERE:
+            # L'eta' che l'atto stesso smentisce. Nella morte del 1821
+            # (atto 820) comparisce «Menasse Franchella di anni trentatre
+            # ... padre della defunta», e la defunta ha «anni
+            # trentacinque»: la pagina, riletta, dice proprio cosi'.
+            # Una delle due e' una svista della penna, e non si puo'
+            # sapere quale cifra fosse: si toglie quella che l'aritmetica
+            # esclude, invece di inventarne una. Senza, quella riga da'
+            # alla madre un figlio nato prima di lei, e il veto della
+            # fertilita' le impedisce per sempre di ricomporsi.
+            menzione.eta_letta = None
+            menzione.eta = None
+            self.conteggi["eta' tolta perche' l'atto la smentisce"] += 1
+        elif eta:
             menzione.eta_letta = eta
             menzione.eta = nomi.analizza_eta(eta)
             self.conteggi["eta' corretta sull'immagine"] += 1
@@ -427,7 +527,8 @@ def carica(
 
     interprete = Interprete(bilancia, corrette=corrette)
     menzioni = lettura_atti.carica_menzioni(
-        conn, correzioni, genere, scambi, interpreta=interprete
+        conn, correzioni, genere, scambi, interpreta=interprete,
+        bilancia=bilancia,
     )
 
     per_atto: dict[int, list[lettura_atti.Menzione]] = defaultdict(list)
@@ -475,7 +576,11 @@ def carica(
 # alzata quando cambia il modo di leggere o di interpretare: senza,
 # un'esecuzione dopo una modifica rileggerebbe dalla cache il corpus
 # vecchio e la modifica non si vedrebbe.
-VERSIONE_LETTURA = "1.1.0"
+# Il valore con cui una correzione dice «questa eta' non si puo'
+# leggere»: la toglie invece di sostituirla.
+ETA_DA_TOGLIERE = "?"
+
+VERSIONE_LETTURA = "1.8.0"
 
 
 def _impronta_sorgente(conn: sqlite3.Connection) -> tuple:

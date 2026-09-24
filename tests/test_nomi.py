@@ -228,3 +228,100 @@ def test_la_riga_gia_dritta_non_si_trascina():
         3: ("Domenico", "Pelliccia"),   # questa e' scritta bene
     }
     assert 3 not in nomi.inversioni_per_atto(atto_di, letti, bilancia)
+
+
+# --- il ruolo batte la frequenza ---------------------------------------
+
+def test_la_correzione_non_cambia_il_sesso_di_chi_e_dichiarato():
+    """Un padre non diventa una donna perche' il suo nome e' raro.
+
+    'Innocente' compare una volta sola in tutto l'archivio, come padre;
+    'Innocenta' nove volte, tutte come madre. Il nome finisce in -e, che
+    non ha sesso, quindi entra in tutti e due i confronti e la
+    correzione delle varianti lo tira verso la forma piu' attestata. Il
+    padre di Maria Lella diventava cosi' «Innocenta».
+    """
+    from collections import Counter
+
+    genere = nomi.Genere(maschili=Counter(), femminili=Counter({"innocenta": 9}))
+    corretto = nomi.applica_correzioni(
+        "Innocente", {"Innocente": "Innocenta"}, ruolo="padre", genere=genere,
+    )
+    assert corretto == "Innocente"
+
+
+def test_la_correzione_passa_quando_il_sesso_non_cambia():
+    from collections import Counter
+
+    genere = nomi.Genere(maschili=Counter({"giuseppe": 268}), femminili=Counter())
+    corretto = nomi.applica_correzioni(
+        "Giyseppe", {"Giyseppe": "Giuseppe"}, ruolo="padre", genere=genere,
+    )
+    assert corretto == "Giuseppe"
+
+
+def test_senza_ruolo_la_correzione_resta_quella_di_prima():
+    corretto = nomi.applica_correzioni("Giyseppe", {"Giyseppe": "Giuseppe"})
+    assert corretto == "Giuseppe"
+
+
+def test_il_nome_composto_prende_il_sesso_dal_primo(monkeypatch):
+    """«Nicola Maria» e' un uomo, «Maria Nicola» una donna.
+
+    Come parola, 'Nicola' nei registri di Torrebruna vale 534 volte da
+    uomo e 103 da donna — perche' 'Maria Nicola' e' un nome femminile e
+    il conteggio non sa in che posizione stia. Resta sotto la soglia e
+    non dice niente, e a quel punto parlava 'Maria': Nicola Maria Lella,
+    nato nel 1885, risultava una bambina, e con lui spariva il primo
+    maschio di suo padre.
+    """
+    from collections import Counter
+
+    genere = nomi.Genere(
+        maschili=Counter({"nicola": 534, "maria": 169}),
+        femminili=Counter({"nicola": 103, "maria": 1959}),
+    )
+    assert genere.della_forma("Nicola") is None, "il caso vive sull'ambiguita'"
+    assert genere.di("Nicola Maria") == "M"
+    assert genere.di("Maria Nicola") == "F"
+
+
+def test_la_desinenza_parla_solo_in_prima_posizione():
+    """In seconda posizione 'Maria' e' un voto, non un sesso."""
+    from collections import Counter
+
+    genere = nomi.Genere(maschili=Counter(), femminili=Counter())
+    assert genere.di("Zaccaria Maria") == "M"   # sta in MASCHILI_IN_A
+    assert genere.di("Rosangela Maria") == "F"
+
+
+# ---------------------------------------------------------------------------
+# L'apostrofo fra due lettere: «vent'uno» e' ventuno, non uno
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("scritto, anni", [
+    ("vent'uno", 21.0),
+    ("trent'uno", 31.0),
+    ("cinquant'otto", 58.0),
+    ("sessant'uno", 61.0),
+])
+def test_l_apostrofo_fra_due_lettere_unisce(scritto, anni):
+    """Il testimone del matrimonio n. 1 del 1811, «Giuseppe Marianacci d'anni vent'uno».
+
+    L'apostrofo finiva fra i segni da togliere come tutti gli altri, e
+    «vent'uno» diventava «vent uno»: il decina si perdeva e restava
+    **uno**. Nei registri di Torrebruna sono poche righe, ma l'eta' che
+    ne usciva faceva di un testimone un bambino di un anno.
+    """
+    assert nomi.analizza_eta(scritto).anni == anni
+
+
+@pytest.mark.parametrize("scritto, anni", [
+    ("quarant'anni", 40.0),
+    ("ventitre'", 23.0),
+    ("d'anni ventidue", 22.0),
+    ("maggiore di eta'", 21.0),
+])
+def test_gli_altri_apostrofi_restano_come_erano(scritto, anni):
+    """Il contrappeso: l'apostrofo che chiude una parola o ne apre una di zavorra."""
+    assert nomi.analizza_eta(scritto).anni == anni

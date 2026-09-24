@@ -39,12 +39,36 @@ logger = logging.getLogger(__name__)
 
 VERSIONE_ALGORITMO = "1.0.0"
 
+# Chi ha aperto la pagina e guardato. Sono i decisori la cui lettura non
+# si lascia ribaltare da una statistica: 'persona' e' chi lo ha fatto a
+# mano, 'claude-immagine' e' il modello che ha aperto la scansione
+# dell'atto invece di ragionare sulla trascrizione. La distinzione conta
+# perche' il registro deve dire da dove viene ogni riga: chiamare
+# 'persona' una lettura fatta da una macchina renderebbe l'audit trail
+# una cortesia invece che una prova.
+DECISORI_CHE_HANNO_GUARDATO = ("persona", "claude-immagine")
+
 
 def salva(
     conn: sqlite3.Connection, decisioni: list[Decisione],
     versione: str = VERSIONE_ALGORITMO,
 ) -> int:
-    """Aggiunge le decisioni al registro. Non tocca quelle gia' scritte."""
+    """Aggiunge le decisioni al registro. Non tocca quelle gia' scritte.
+
+    Una decisione dell'**algoritmo** che dice esattamente cio' che una
+    riga gia' scritta dice — stessa azione, stesse entita', stesso
+    motivo — non e' una decisione nuova: e' lo stesso ragionamento
+    rifatto al giro dopo, perche' la tabella non si azzera mentre tutte
+    le altre si rifanno. Riscriverla ogni volta riempie il registro di
+    copie: una sola separazione ci era finita dentro duecento volte, e
+    su quattrocentotrentasettemila righe quattrocentoventicinquemila
+    erano ripetizioni. Il registro serve a farsi leggere; quelle copie
+    lo rendevano illeggibile e basta.
+
+    Le decisioni di **chi ha guardato la pagina** non si toccano: sono
+    poche, sono la cosa piu' preziosa dell'archivio, e se una persona
+    decide due volte la stessa cosa il registro deve dirlo.
+    """
     righe = [
         (
             decisione.quando or _adesso(),
@@ -63,12 +87,20 @@ def salva(
         )
         for decisione in decisioni
     ]
-    conn.executemany(
-        "INSERT INTO decisioni (quando, azione, entita, motivo, confidenza, "
-        "evidenze, contraddizioni, atti, decisore, modello, versione_prompt, "
-        "versione_algoritmo, disfa) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        righe,
-    )
+    campi = ("INSERT INTO decisioni (quando, azione, entita, motivo, confidenza, "
+             "evidenze, contraddizioni, atti, decisore, modello, versione_prompt, "
+             "versione_algoritmo, disfa) ")
+    dalla_macchina = [riga for riga in righe if riga[8] == "algoritmo"]
+    a_mano = [riga for riga in righe if riga[8] != "algoritmo"]
+    if a_mano:
+        conn.executemany(campi + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", a_mano)
+    if dalla_macchina:
+        conn.executemany(
+            campi + "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS ("
+            "SELECT 1 FROM decisioni WHERE decisore = 'algoritmo' AND azione = ?2 "
+            "AND entita = ?3 AND IFNULL(motivo, '') = IFNULL(?4, ''))",
+            dalla_macchina,
+        )
     return len(righe)
 
 
@@ -134,6 +166,15 @@ def imposizioni(conn: sqlite3.Connection) -> dict:
     E' cio' che chiude il cerchio: senza, il giudizio di chi ha guardato
     la carta vale una volta sola, e la ricostruzione successiva torna alla
     stessa conclusione di prima.
+
+    ``unire`` e' una lista di coppie di menzioni; ``separare`` una lista
+    di gruppi ``(resta, (staccate...))``, **uno per decisione**. Il
+    gruppo non si appiattisce in coppie perche' due decisioni diverse
+    sulla stessa scheda non sono la stessa separazione: staccare la
+    menzione A verso una persona e la menzione B verso un'altra vuol dire
+    tre pezzi, non due. Appiattendole, A e B finivano nello stesso pezzo
+    e la prima unione se le portava via tutt'e due — vedi
+    ``risoluzione.applica_decisioni``.
     """
     conn.row_factory = sqlite3.Row
     try:
@@ -164,8 +205,7 @@ def imposizioni(conn: sqlite3.Connection) -> dict:
         # scheda: la prima entita' e' quella che resta, tutte le altre se
         # ne vanno. Leggerne solo due lascerebbe settanta righe dalla
         # parte sbagliata e la scheda lunga una vita e mezza.
-        for staccata in entita[1:]:
-            imposte["separare"].append((entita[0], staccata))
+        imposte["separare"].append((entita[0], tuple(entita[1:])))
     return imposte
 
 

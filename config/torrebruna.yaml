@@ -146,7 +146,25 @@ trascrizione:
   # minuto — con le facciate divise sono due immagini da ~1.550 token per
   # pagina — e sei pagine per chiamata ci stanno comode. A 250 richieste
   # al giorno fanno 1.500 pagine al giorno.
-  pagine_per_chiamata: 12
+  #
+  # ATTENZIONE: il tetto vero non e' quello dei token, e' l'ATTENZIONE.
+  # A dodici pagine per chiamata il modello, su una facciata che porta
+  # quattro atti, ne legge due e li numera da se': misurato sul registro
+  # 1882-morti, dove la pagina 6 porta gli atti 13-16 e la trascrizione
+  # diceva «sette, otto». Non e' una troncatura — quella il codice la
+  # riconosce e ripiega — e' una perdita silenziosa, con un JSON ben
+  # formato e sbagliato. Su tutto il fondo faceva sparire ~400 atti
+  # (il 5% dell'archivio) in 24 registri.
+  #
+  # A TRE pagine per chiamata lo stesso registro rende 60 atti invece di
+  # 37, e i numeri combaciano con la carta. Costa quattro volte le
+  # chiamate: un archivio incompleto costa di piu'.
+  #
+  # E non e' una monotonia: c'e' un OPTIMUM, non "meno e' meglio". A UNA
+  # pagina per chiamata la resa crolla — misurato su nove registri, sette
+  # peggiorano e alcuni rovinosamente (33 atti -> 3; 18 -> 1). Due o tre
+  # e' la zona buona; sotto e sopra si perde.
+  pagine_per_chiamata: 3
 
   # Quante chiamate tenere aperte insieme. E' la leva piu' grossa sul
   # tempo, ed e' quella che nessuno dei limiti del piano proibisce: le

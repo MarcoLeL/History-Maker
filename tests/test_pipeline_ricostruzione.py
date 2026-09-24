@@ -160,3 +160,19 @@ def test_il_rapporto_su_una_storia_vuota_non_fallisce():
     from history_maker.ricostruzione.pipeline import rapporto
 
     assert rapporto([])
+
+
+def test_esegui_passa_facciate_non_atti_singoli_a_prepara():
+    """Il bug che ha fatto cadere il primo giro vero.
+
+    'casi' elenca atti; 'prepara' itera facciate (liste di atti). La CLI
+    usa 'da_rileggere', che raggruppa. La pipeline deve fare lo stesso,
+    altrimenti il primo atto della coda diventa ``for atto in 13757``.
+    """
+    import inspect
+
+    from history_maker.ricostruzione import pipeline
+
+    src = inspect.getsource(pipeline.esegui)
+    assert "da_rileggere" in src
+    assert "prepara(conn, atti" not in src

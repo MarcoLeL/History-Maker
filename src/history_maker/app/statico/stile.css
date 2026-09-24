@@ -183,6 +183,8 @@ main { flex: 1 1 auto; display: flex; min-height: 0; }
 #archi path.unione { stroke-width: 2; }
 #archi path.unione.certo { stroke: var(--accento); }
 #archi path.unione.dedotto { stroke: var(--ignoto); stroke-dasharray: 4 3; }
+/* Un legame che nessun atto dichiara non si disegna come uno che c'e'. */
+#archi path.filiazione.dedotto { stroke: var(--ignoto); stroke-dasharray: 5 4; }
 #archi path.acceso { stroke: var(--accento); stroke-width: 2.2; }
 .punta { fill: var(--riga-forte); }
 

@@ -173,6 +173,7 @@ python -m history_maker revisione
 # 6. riconosci le persone e ricostruisci l'albero (non consuma quota)
 python -m history_maker ricostruisci
 python -m history_maker dubbi              # cosa il calcolo non ha saputo decidere
+python -m history_maker deduci             # i genitori che nessun atto scrive
 
 # 7. conta cio' che nell'albero non puo' essere vero
 python -m history_maker qualita
