@@ -162,6 +162,54 @@ def leggi_trascrizioni(
         )
 
 
+def _ammessi_dalle_trascrizioni(config: Config) -> set[str] | None:
+    """I registri da tenere quando il catalogo non c'e', ricavati dalle pagine.
+
+    Il catalogo sta in ``data/``, fuori dal repository; le trascrizioni no.
+    Un clone rifaceva il database prendendo TUTTO: anche le pubblicazioni
+    del 1810, che la configurazione esclude perche' duplicano gli atti di
+    matrimonio. Sono 131 righe in testa al secolo, e spostavano di 131 gli
+    id di tutte quelle che seguono — gli id a cui puntano le decisioni prese
+    sull'immagine. Nel clone ogni correzione finiva su un'altra persona.
+
+    Ogni pagina porta in ``_origine`` l'anno, la tipologia e il contesto del
+    suo registro: e' quanto serve a :func:`catalogo.selezione`, che cosi'
+    decide come avrebbe deciso col catalogo, recuperi compresi (le
+    pubblicazioni del 1870-1888, uniche tracce dei matrimoni di quegli anni).
+    Un registro senza quei dati - una trascrizione messa li' a mano - si
+    tiene, come prima.
+    """
+    from history_maker.catalogo import Catalogo, Registro, selezione
+
+    registri: dict[str, Registro] = {}
+    senza_dati: set[str] = set()
+    for percorso in sorted(config.trascrizioni.rglob("*.json")):
+        if percorso.name.startswith("_") or percorso.parent.name in registri:
+            continue
+        try:
+            origine = json.loads(percorso.read_text(encoding="utf-8")).get("_origine") or {}
+        except json.JSONDecodeError:
+            continue
+        slug = origine.get("registro")
+        if not slug or slug in registri:
+            continue
+        if not (origine.get("contesto") and origine.get("tipologia") and origine.get("anno")):
+            senza_dati.add(slug)
+            continue
+        registri[slug] = Registro(
+            ark_url=origine.get("ark_url") or slug,
+            contesto=origine["contesto"],
+            titolo=str(origine["anno"]),
+            tipologia=origine["tipologia"],
+            anno=int(origine["anno"]),
+            cartella=slug,
+        )
+    if not registri:
+        return None
+    tenuti = selezione(Catalogo(comune=config.comune, registri=list(registri.values())), config)
+    return {r.cartella for r in tenuti} | senza_dati
+
+
 def _percorso_pulito(percorso: str | None) -> str | None:
     r"""Percorso con separatori '/', qualunque sistema l'abbia scritto.
 
@@ -484,13 +532,14 @@ def costruisci(config: Config) -> Path:
     da_leggere = sum(1 for p in config.trascrizioni.rglob("*.json") if not p.name.startswith("_"))
     logger.info("Fase 1/5: leggo %d pagine di trascrizione", da_leggere)
     passo = max(1, da_leggere // 20)
-    # Gli slug che la configurazione tiene. Senza catalogo — una raccolta
-    # trascritta a mano — si prende tutto quello che c'e'.
-    ammessi = None
-    if config.catalogo.exists():
-        from history_maker.catalogo import Catalogo, selezione
+    # Gli slug che la configurazione tiene. Senza catalogo il catalogo si
+    # rifa' dalle trascrizioni stesse (vedi _catalogo_dalle_trascrizioni).
+    from history_maker.catalogo import Catalogo, selezione
 
+    if config.catalogo.exists():
         ammessi = {r.slug for r in selezione(Catalogo.carica(config.catalogo), config)}
+    else:
+        ammessi = _ammessi_dalle_trascrizioni(config)
 
     for lette, pagina in enumerate(leggi_trascrizioni(config.trascrizioni, ammessi), 1):
         if lette % passo == 0 or lette == da_leggere:

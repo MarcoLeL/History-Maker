@@ -4311,3 +4311,29 @@ def test_due_fratelli_dello_stesso_padre_restano_due_atti():
     for riga in righe:
         riga.anno = 1850
     assert lettura_atti.atti_gemelli(righe) == 0
+
+
+def test_il_genitore_gia_morto_resta_genitore():
+    """Morte del 1827 n. 14: «figlio di Vincenzo Pelliccia, e fu Anna Desiderio».
+
+    Il «fu» della madre era stato scritto nel ruolo («defunta»), e nella morte
+    «defunta» e' la morta dell'atto: Anna diventava figlia di suo marito. La
+    correzione lo scrive nello stato civile, e la madre resta madre. Il
+    contrappeso: lo stato civile non cambia il ruolo.
+    """
+    from history_maker import menzioni as lettura_atti
+    from history_maker.ricostruzione.lettura import Interprete
+
+    righe = [
+        _riga(1, "morte", "defunto", "Nicolangelo", "Pelliccia"),
+        _riga(2, "morte", "padre", "Vincenzo", "Pelliccia"),
+        _riga(3, "morte", "madre", "Anna", "Desiderio"),
+    ]
+    leggi = Interprete(corrette={(3, "stato_vitale"): "defunta"})
+    for riga in righe:
+        leggi(riga)
+    assert righe[2].ruolo == "madre"
+    assert righe[2].stato_vitale == "defunta"
+    lettura_atti.famiglia_dell_atto(righe)
+    assert righe[0].madre == 3, "la madre morta resta la madre del morto"
+    assert righe[2].madre is None, "e non diventa figlia di nessuno"

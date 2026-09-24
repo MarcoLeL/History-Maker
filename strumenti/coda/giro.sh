@@ -21,16 +21,24 @@
 # qualita' conviene rifare il giro 'pieno'.
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 S="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY=.venv/Scripts/python.exe
+# Su Windows il Python del venv; altrove (Linux, la sessione nel cloud) quello di sistema.
+if [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe
+elif [ -x .venv/bin/python ]; then PY=.venv/bin/python
+else PY=python; fi
 ETICHETTA="${1:-J}"
 PIENO="${2:-}"
 ferma_server() {
+  if ! command -v powershell >/dev/null 2>&1; then
+    pkill -f "history_maker.*albero" 2>/dev/null || true
+    return
+  fi
   powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force }" || true
 }
-PRIMA=$(ls -t "$S"/qualita_*.md | head -1)
+PRIMA=$(ls -t "$S"/qualita_*.md 2>/dev/null | head -1)
 
 echo "== 0. il server passa su una copia =="
 ferma_server
+mkdir -p data/dataset_F
 cp data/dataset/torrebruna.sqlite data/dataset_F/torrebruna.sqlite
 nohup $PY -m history_maker -c "$S/torrebruna-F.yaml" albero --senza-browser --porta 8000 > server.log 2>&1 &
 
@@ -46,7 +54,7 @@ fi
 echo "== 2. qualita' (contro $(basename "$PRIMA")) =="
 $PY -m history_maker qualita 2>&1 | tail -2
 cp data/dataset/qualita.md "$S/qualita_$ETICHETTA.md"
-$PY "$S/confronta_qualita.py" "$PRIMA" "$S/qualita_$ETICHETTA.md" 2>&1 | tail -6
+[ -n "$PRIMA" ] && $PY "$S/confronta_qualita.py" "$PRIMA" "$S/qualita_$ETICHETTA.md" 2>&1 | tail -6
 
 echo "== 3. i due problemi =="
 $PY "$S/analisi_coniugi_cognomi.py" 2>&1 | head -18

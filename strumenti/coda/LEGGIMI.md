@@ -53,3 +53,27 @@ restano in `data/immagini/`, fuori da git.
 serve intero, e senza non si ricostruisce niente. Si rifa' dalle
 trascrizioni (`data/trascrizioni/`, quarantadue mega) con la fase
 `dataset`, che rimette dentro anche il registro delle decisioni.
+
+## Ripartire in locale dopo una sessione altrove
+
+Il lavoro di una sessione sta tutto in due file: `verdetti_casi.json` (le
+decisioni) e `rari_fatti.json` (le pagine gia' guardate, che `rari_lotto.py`
+salta). Per riprendere:
+
+    git pull
+    python strumenti/coda/applica_casi.py        # aggiunge le decisioni nuove, salta quelle che ci sono
+    python strumenti/coda/applica_casi.py --prova # deve dire 0 da registrare
+    bash strumenti/coda/giro.sh <etichetta> pieno # 'pieno': la sessione ha toccato il codice
+
+`applica_casi.py` riconosce una voce gia' scritta da azione, righe e motivo, e
+le voci che portano "disfa" ritrovano la decisione da superare dal contenuto
+(azione contraria sulle stesse righe), non dall'id: gli id delle decisioni
+cambiano da un database all'altro. Gli id delle RIGHE invece sono gli stessi,
+purche' il database sia fatto con la stessa selezione di registri (vedi
+`dataset._ammessi_dalle_trascrizioni`, che senza catalogo rifa' quella del
+catalogo).
+
+Il «fu» di un genitore gia' morto si scrive `C <riga> stato_vitale defunto`
+(o `defunta`), non nel ruolo: nella morte e nel matrimonio la casella
+«defunto» e' il morto dell'atto, e il genitore scritto cosi' diventava figlio
+dell'altro genitore. `reg.py` rifiuta la forma sbagliata.

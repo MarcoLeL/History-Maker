@@ -106,3 +106,27 @@ def test_sull_indirizzo_la_sostituzione_resta_dentro_la_frase():
         {"Trascinella": ["Trafficinella"]}))
     detto = "strada Trafficinella numero due"
     assert g.correggi_campo(detto, "luogo")[0] == "strada Trascinella numero due"
+
+
+def test_il_casato_scica_non_diventa_sica():
+    """La voce andava nel verso sbagliato: il casato e' Scica, «Sica» e' la lettura.
+
+    Matrimonio n. 4 del 1816: «Michele Scica ... pastore, domiciliato nel
+    Comune di Palata in Molise, figlio maggiore delli furono Diego Scica»,
+    con la c netta. Il glossario diceva scica -> Sica, e tutta la famiglia
+    finiva nell'albero col casato sbagliato.
+    """
+    from pathlib import Path
+
+    g = glossario.Glossario.carica(Path("config/glossario-torrebruna.yaml"))
+    assert g.correggi_campo("Scica", "cognome")[0] == "Scica"
+    assert g.correggi_campo("Sica", "cognome")[0] == "Scica"
+
+
+def test_la_voce_sica_non_tocca_i_casati_che_la_contengono():
+    """Il contrappeso: «Sica» si corregge solo come parola intera."""
+    from pathlib import Path
+
+    g = glossario.Glossario.carica(Path("config/glossario-torrebruna.yaml"))
+    for forma in ("Musica", "Sicari", "Scica"):
+        assert g.correggi_campo(forma, "cognome")[0] == forma

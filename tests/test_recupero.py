@@ -235,3 +235,43 @@ def test_l_anno_di_chiusura_si_legge_solo_se_e_maggiore():
     assert estrai_anno_fine("1813-1813") is None
     assert estrai_anno_fine("Registro del 1866") is None
     assert estrai_anno_fine("1866-1875") == 1875
+
+
+# --- senza catalogo: la stessa selezione, ricavata dalle trascrizioni -------
+
+
+def _pagina(cartella, slug, anno, tipologia):
+    import json
+
+    (cartella / slug).mkdir(parents=True, exist_ok=True)
+    (cartella / slug / "0001-pag-1.json").write_text(json.dumps({"_origine": {
+        "registro": slug, "anno": anno, "tipologia": tipologia,
+        "contesto": "Archivio di Stato di Chieti > Stato civile napoleonico > Torrebruna",
+    }}), encoding="utf-8")
+
+
+def test_senza_catalogo_la_pubblicazione_col_suo_atto_resta_fuori(tmp_path):
+    """Un clone non ha data/catalogo.json: prima prendeva tutto.
+
+    Le pubblicazioni del 1810 entravano nel database e spostavano di 131 gli
+    id di tutte le righe seguenti, a cui puntano le decisioni prese
+    sull'immagine: nel clone ogni correzione finiva su un'altra persona.
+    """
+    from history_maker import dataset
+
+    config = _config(tmp_path)
+    _pagina(config.trascrizioni, "1810-matrimoni-18286806", 1810, "Matrimoni")
+    _pagina(config.trascrizioni, "1810-matrimoni-pubblicazioni-18286799", 1810,
+            "Matrimoni, pubblicazioni")
+    assert dataset._ammessi_dalle_trascrizioni(config) == {"1810-matrimoni-18286806"}
+
+
+def test_senza_catalogo_la_pubblicazione_senza_atto_rientra(tmp_path):
+    """Il contrappeso: dove il registro dei matrimoni manca, la pubblicazione resta."""
+    from history_maker import dataset
+
+    config = _config(tmp_path)
+    _pagina(config.trascrizioni, "1870-matrimoni-pubblicazioni-18259289", 1870,
+            "Matrimoni, pubblicazioni")
+    assert dataset._ammessi_dalle_trascrizioni(config) == {
+        "1870-matrimoni-pubblicazioni-18259289"}

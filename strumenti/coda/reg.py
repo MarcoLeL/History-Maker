@@ -26,6 +26,12 @@ for riga in sys.stdin.read().splitlines():
         for n in parti[1:]:
             fatti.add(voci[int(n)])
     elif parti[0] == "C":
+        # Il genitore gia' morto («figlia delli furono ...») resta genitore: il
+        # «fu» e' lo stato civile. Scritto nel ruolo, nella morte e nel
+        # matrimonio faceva della madre la figlia di suo marito (giro R4).
+        if parti[2] == "ruolo" and parti[3] in ("defunto", "defunta"):
+            sys.exit(f"riga {parti[1]}: il «fu» di un genitore va in 'stato_vitale {parti[3]}', "
+                     "non nel ruolo")
         v.append({"tipo": "correzione", "menzione": int(parti[1]), "campo": parti[2],
                   "valore": " ".join(parti[3:]), "motivo": motivo})
     elif parti[0] in ("U", "S"):

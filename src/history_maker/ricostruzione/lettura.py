@@ -369,6 +369,15 @@ class Interprete:
         if ruolo:
             menzione.ruolo = ruolo.strip().casefold()
             self.conteggi["ruolo corretto sull'immagine"] += 1
+        # «Figlia delli furono Tobia Pelliccia e di Anna Lella»: i genitori gia'
+        # morti restano genitori. Il «fu» va nello stato civile, non nel ruolo:
+        # nella morte «defunto» e' il morto dell'atto, e una madre scritta cosi'
+        # diventava una figlia del padre (morte del 1827 n. 14, Anna Desiderio
+        # «figlia» di suo marito Vincenzo Pelliccia).
+        stato = self.corrette.get((menzione.id, "stato_vitale"))
+        if stato:
+            menzione.stato_vitale = stato.strip().casefold()
+            self.conteggi["stato civile corretto sull'immagine"] += 1
         # Il patronimico si stacca dal nome **prima** della correzione: «Maria
         # di Rondo», corretta in Maria Di Nardo, restava figlia di Rondo, e il
         # veto sui padri diversi la teneva lontana da se stessa. Corretto il
